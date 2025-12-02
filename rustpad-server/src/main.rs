@@ -1,4 +1,4 @@
-use rustpad_server::{server, database::Database, ServerConfig};
+use rustpad_server::{server, database::Database, freeze::{FreezeConfig, FreezeManager}, ServerConfig};
 
 #[tokio::main]
 async fn main() {
@@ -9,6 +9,16 @@ async fn main() {
         .unwrap_or_else(|_| String::from("3030"))
         .parse()
         .expect("Unable to parse PORT");
+
+    let freeze_config = FreezeConfig::from_env();
+    let freeze_manager = if freeze_config.enabled {
+        Some(std::sync::Arc::new(
+            FreezeManager::new(freeze_config)
+                .expect("Unable to initialize FreezeManager"),
+        ))
+    } else {
+        None
+    };
 
     let config = ServerConfig {
         expiry_days: std::env::var("EXPIRY_DAYS")
@@ -23,6 +33,7 @@ async fn main() {
             ),
             Err(_) => None,
         },
+        freeze_manager,
     };
 
     warp::serve(server(config)).run(([0, 0, 0, 0], port)).await;

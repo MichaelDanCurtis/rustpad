@@ -13,9 +13,10 @@ use serde::Serialize;
 use tokio::time::{self, Instant};
 use warp::{filters::BoxedFilter, ws::Ws, Filter, Rejection, Reply};
 
-use crate::{database::Database, rustpad::Rustpad};
+use crate::{database::Database, freeze::FreezeManager, rustpad::Rustpad};
 
 pub mod database;
+pub mod freeze;
 mod ot;
 mod rustpad;
 
@@ -57,6 +58,8 @@ struct ServerState {
     documents: Arc<DashMap<String, Document>>,
     /// Connection to the database pool, if persistence is enabled.
     database: Option<Database>,
+    /// File freeze manager for 30-day persistence.
+    freeze_manager: Option<Arc<FreezeManager>>,
 }
 
 /// Statistics about the server, returned from an API endpoint.
@@ -77,6 +80,8 @@ pub struct ServerConfig {
     pub expiry_days: u32,
     /// Database object, for persistence if desired.
     pub database: Option<Database>,
+    /// Freeze manager for 30-day document persistence.
+    pub freeze_manager: Option<Arc<FreezeManager>>,
 }
 
 impl Default for ServerConfig {
@@ -84,6 +89,7 @@ impl Default for ServerConfig {
         Self {
             expiry_days: 1,
             database: None,
+            freeze_manager: None,
         }
     }
 }
@@ -106,8 +112,14 @@ fn backend(config: ServerConfig) -> BoxedFilter<(impl Reply,)> {
     let state = ServerState {
         documents: Default::default(),
         database: config.database,
+        freeze_manager: config.freeze_manager.clone(),
     };
     tokio::spawn(cleaner(state.clone(), config.expiry_days));
+    
+    // Spawn freeze cleanup task if enabled
+    if let Some(ref freeze_manager) = config.freeze_manager {
+        tokio::spawn(freeze_cleaner(Arc::clone(freeze_manager)));
+    }
 
     let state_filter = warp::any().map(move || state.clone());
 
@@ -126,10 +138,35 @@ fn backend(config: ServerConfig) -> BoxedFilter<(impl Reply,)> {
         .as_secs();
     let stats = warp::path!("stats")
         .and(warp::any().map(move || start_time))
-        .and(state_filter)
+        .and(state_filter.clone())
         .and_then(stats_handler);
 
-    socket.or(text).or(stats).boxed()
+    let freeze = warp::path("documents")
+        .and(warp::path!(String / "freeze"))
+        .and(warp::post())
+        .and(warp::body::json())
+        .and(state_filter.clone())
+        .and_then(freeze_handler);
+
+    let download = warp::path("documents")
+        .and(warp::path!(String / "download"))
+        .and(warp::get())
+        .and(state_filter.clone())
+        .and_then(download_handler);
+
+    let list_frozen = warp::path!("documents" / "list")
+        .and(warp::get())
+        .and(warp::header::optional("Authorization"))
+        .and(state_filter.clone())
+        .and_then(list_frozen_handler);
+
+    socket
+        .or(text)
+        .or(stats)
+        .or(freeze)
+        .or(download)
+        .or(list_frozen)
+        .boxed()
 }
 
 /// Handler for the `/api/socket/{id}` endpoint.
@@ -227,6 +264,138 @@ async fn persister(id: String, rustpad: Arc<Rustpad>, db: Database) {
             } else {
                 last_revision = revision;
             }
+        }
+    }
+}
+
+/// Request body for freezing a document
+#[derive(serde::Deserialize)]
+struct FreezeRequest {
+    owner_token: Option<String>,
+    language: Option<String>,
+}
+
+/// Response for freezing a document
+#[derive(Serialize)]
+struct FreezeResponse {
+    owner_token: String,
+    document_id: String,
+    frozen_at: String,
+    expires_at: String,
+    file_extension: String,
+}
+
+/// Handler for POST /api/documents/{id}/freeze
+async fn freeze_handler(
+    id: String,
+    req: FreezeRequest,
+    state: ServerState,
+) -> Result<impl Reply, Rejection> {
+    let freeze_manager = state
+        .freeze_manager
+        .as_ref()
+        .ok_or_else(|| warp::reject::custom(CustomReject(anyhow::anyhow!("Freeze feature not enabled"))))?;
+
+    // Get the current document content
+    let content = match state.documents.get(&id) {
+        Some(doc) => doc.rustpad.text(),
+        None => {
+            // Try loading from database
+            if let Some(db) = &state.database {
+                db.load(&id)
+                    .await
+                    .map(|doc| doc.text)
+                    .unwrap_or_default()
+            } else {
+                return Err(warp::reject::custom(CustomReject(anyhow::anyhow!(
+                    "Document not found"
+                ))));
+            }
+        }
+    };
+
+    // Get language
+    let language = req.language.or_else(|| {
+        state.documents.get(&id).and_then(|doc| {
+            let snapshot = doc.rustpad.snapshot();
+            snapshot.language
+        })
+    }).unwrap_or_else(|| "plaintext".to_string());
+
+    // Get or generate owner token
+    let owner_token = req.owner_token.unwrap_or_else(FreezeManager::generate_owner_token);
+
+    // Freeze the document
+    let frozen_doc = freeze_manager
+        .freeze_document(&id, &owner_token, &language, &content)
+        .map_err(|e| warp::reject::custom(CustomReject(e)))?;
+
+    Ok(warp::reply::json(&FreezeResponse {
+        owner_token: frozen_doc.owner_token,
+        document_id: frozen_doc.document_id,
+        frozen_at: frozen_doc.frozen_at.to_rfc3339(),
+        expires_at: frozen_doc.expires_at.to_rfc3339(),
+        file_extension: frozen_doc.file_extension,
+    }))
+}
+
+/// Handler for GET /api/documents/{id}/download
+async fn download_handler(id: String, state: ServerState) -> Result<impl Reply, Rejection> {
+    let content = match state.documents.get(&id) {
+        Some(doc) => doc.rustpad.text(),
+        None => {
+            if let Some(db) = &state.database {
+                db.load(&id)
+                    .await
+                    .map(|doc| doc.text)
+                    .unwrap_or_default()
+            } else {
+                return Err(warp::reject::custom(CustomReject(anyhow::anyhow!(
+                    "Document not found"
+                ))));
+            }
+        }
+    };
+
+    Ok(warp::reply::with_header(
+        content,
+        "Content-Disposition",
+        format!("attachment; filename=\"{}.txt\"", id),
+    ))
+}
+
+/// Handler for GET /api/documents/list
+async fn list_frozen_handler(
+    auth: Option<String>,
+    state: ServerState,
+) -> Result<impl Reply, Rejection> {
+    let freeze_manager = state
+        .freeze_manager
+        .as_ref()
+        .ok_or_else(|| warp::reject::custom(CustomReject(anyhow::anyhow!("Freeze feature not enabled"))))?;
+
+    // Extract token from Authorization header
+    let owner_token = auth
+        .and_then(|h| h.strip_prefix("Bearer ").map(String::from))
+        .ok_or_else(|| {
+            warp::reject::custom(CustomReject(anyhow::anyhow!("Missing or invalid Authorization header")))
+        })?;
+
+    let documents = freeze_manager
+        .list_frozen_documents(&owner_token)
+        .map_err(|e| warp::reject::custom(CustomReject(e)))?;
+
+    Ok(warp::reply::json(&documents))
+}
+
+/// Cleanup task for expired frozen documents
+async fn freeze_cleaner(freeze_manager: Arc<FreezeManager>) {
+    loop {
+        time::sleep(HOUR * 6).await; // Run every 6 hours
+        match freeze_manager.cleanup_expired() {
+            Ok(count) if count > 0 => info!("Cleaned up {} expired frozen documents", count),
+            Err(e) => error!("Error during freeze cleanup: {}", e),
+            _ => {}
         }
     }
 }
