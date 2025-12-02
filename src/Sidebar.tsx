@@ -12,8 +12,9 @@ import {
   Switch,
   Text,
   useToast,
+  HStack,
 } from "@chakra-ui/react";
-import { VscRepo } from "react-icons/vsc";
+import { VscRepo, VscSave, VscCloudDownload } from "react-icons/vsc";
 
 import ConnectionStatus from "./ConnectionStatus";
 import User from "./User";
@@ -32,6 +33,8 @@ export type SidebarProps = {
   onLoadSample: () => void;
   onChangeName: (name: string) => void;
   onChangeColor: () => void;
+  onFreeze: () => void;
+  onDownload: () => void;
 };
 
 function Sidebar({
@@ -46,6 +49,8 @@ function Sidebar({
   onLoadSample,
   onChangeName,
   onChangeColor,
+  onFreeze,
+  onDownload,
 }: SidebarProps) {
   const toast = useToast();
 
@@ -122,6 +127,36 @@ function Sidebar({
           </Button>
         </InputRightElement>
       </InputGroup>
+
+      <Heading mt={4} mb={1.5} size="sm">
+        Document Actions
+      </Heading>
+      <HStack spacing={2}>
+        <Button
+          size="sm"
+          colorScheme={darkMode ? "whiteAlpha" : "blackAlpha"}
+          borderColor={darkMode ? "green.400" : "green.600"}
+          color={darkMode ? "green.400" : "green.600"}
+          variant="outline"
+          leftIcon={<VscSave />}
+          flex={1}
+          onClick={onFreeze}
+        >
+          Freeze 30d
+        </Button>
+        <Button
+          size="sm"
+          colorScheme={darkMode ? "whiteAlpha" : "blackAlpha"}
+          borderColor={darkMode ? "blue.400" : "blue.600"}
+          color={darkMode ? "blue.400" : "blue.600"}
+          variant="outline"
+          leftIcon={<VscCloudDownload />}
+          flex={1}
+          onClick={onDownload}
+        >
+          Download
+        </Button>
+      </HStack>
 
       <Heading mt={4} mb={1.5} size="sm">
         Active Users

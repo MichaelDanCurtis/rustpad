@@ -6,6 +6,7 @@ import { VscChevronRight, VscFolderOpened, VscGist } from "react-icons/vsc";
 import useLocalStorageState from "use-local-storage-state";
 
 import rustpadRaw from "../rustpad-server/src/rustpad.rs?raw";
+import FileBrowserModal from "./FileBrowserModal";
 import Footer from "./Footer";
 import ReadCodeConfirm from "./ReadCodeConfirm";
 import Sidebar from "./Sidebar";
@@ -49,6 +50,7 @@ function App() {
   const id = useHash();
 
   const [readCodeConfirmOpen, setReadCodeConfirmOpen] = useState(false);
+  const [fileBrowserOpen, setFileBrowserOpen] = useState(false);
 
   useEffect(() => {
     if (editor?.getModel()) {
@@ -137,6 +139,76 @@ function App() {
     setDarkMode(!darkMode);
   }
 
+  async function handleFreeze() {
+    try {
+      // Get stored owner token or generate new one
+      let ownerToken = localStorage.getItem("rustpad_owner_token");
+      
+      const response = await fetch(`/api/documents/${id}/freeze`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          owner_token: ownerToken || undefined,
+          language: language !== "plaintext" ? language : undefined,
+        }),
+      });
+
+      if (!response.ok) {
+        const error = await response.text();
+        throw new Error(error || "Failed to freeze document");
+      }
+
+      const result = await response.json();
+      
+      // Store the owner token
+      localStorage.setItem("rustpad_owner_token", result.owner_token);
+
+      const expiryDate = new Date(result.expires_at);
+      toast({
+        title: "Document frozen!",
+        description: (
+          <>
+            Saved as <Text as="span" fontWeight="semibold">{result.document_id}.{result.file_extension}</Text>.
+            <br />
+            Expires: {expiryDate.toLocaleDateString()}
+            {!ownerToken && (
+              <>
+                <br />
+                <Text as="span" fontSize="xs" color="yellow.300">
+                  Your owner token has been saved locally.
+                </Text>
+              </>
+            )}
+          </>
+        ),
+        status: "success",
+        duration: 6000,
+        isClosable: true,
+      });
+    } catch (error) {
+      toast({
+        title: "Freeze failed",
+        description: error instanceof Error ? error.message : "Unknown error",
+        status: "error",
+        duration: 4000,
+        isClosable: true,
+      });
+    }
+  }
+
+  function handleDownload() {
+    window.location.href = `/api/documents/${id}/download`;
+    toast({
+      title: "Downloading",
+      description: "Your document is being downloaded",
+      status: "info",
+      duration: 2000,
+      isClosable: true,
+    });
+  }
+
   return (
     <Flex
       direction="column"
@@ -168,6 +240,8 @@ function App() {
           onLoadSample={() => handleLoadSample(false)}
           onChangeName={(name) => name.length > 0 && setName(name)}
           onChangeColor={() => setHue(generateHue())}
+          onFreeze={handleFreeze}
+          onDownload={handleDownload}
         />
         <ReadCodeConfirm
           isOpen={readCodeConfirmOpen}
@@ -207,7 +281,12 @@ function App() {
           </Box>
         </Flex>
       </Flex>
-      <Footer />
+      <Footer onOpenFiles={() => setFileBrowserOpen(true)} />
+      <FileBrowserModal
+        isOpen={fileBrowserOpen}
+        onClose={() => setFileBrowserOpen(false)}
+        darkMode={darkMode}
+      />
     </Flex>
   );
 }
