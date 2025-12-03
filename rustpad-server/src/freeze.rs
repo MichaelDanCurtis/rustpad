@@ -130,7 +130,7 @@ impl FreezeManager {
     pub fn freeze_document(
         &self,
         document_id: &str,
-        owner_token: &str,
+        username: &str,
         language: &str,
         content: &str,
     ) -> Result<FrozenDocument> {
@@ -147,8 +147,8 @@ impl FreezeManager {
             );
         }
 
-        // Create directory structure: {SAVE_DIR}/frozen/{owner_token}/
-        let owner_dir = self.config.save_dir.join("frozen").join(owner_token);
+        // Create directory structure: {SAVE_DIR}/frozen/{username}/
+        let owner_dir = self.config.save_dir.join("frozen").join(username);
         fs::create_dir_all(&owner_dir)
             .context("Failed to create owner directory")?;
 
@@ -165,7 +165,7 @@ impl FreezeManager {
 
         let frozen_doc = FrozenDocument {
             document_id: document_id.to_string(),
-            owner_token: owner_token.to_string(),
+            owner_token: username.to_string(),
             language: language.to_string(),
             file_extension: file_extension.to_string(),
             frozen_at,
@@ -180,20 +180,20 @@ impl FreezeManager {
         // Cache the metadata
         let mut cache = self.metadata_cache.write();
         cache
-            .entry(owner_token.to_string())
+            .entry(username.to_string())
             .or_insert_with(Vec::new)
             .push(frozen_doc.clone());
 
         info!(
-            "Frozen document: id={}, owner_token={}, size={} bytes",
-            document_id, owner_token, content_bytes.len()
+            "Frozen document: id={}, username={}, size={} bytes",
+            document_id, username, content_bytes.len()
         );
 
         Ok(frozen_doc)
     }
 
-    /// List frozen documents for an owner
-    pub fn list_frozen_documents(&self, owner_token: &str) -> Result<Vec<FrozenDocument>> {
+    /// List frozen documents for a user
+    pub fn list_frozen_documents(&self, username: &str) -> Result<Vec<FrozenDocument>> {
         if !self.config.enabled {
             bail!("File freeze feature is not enabled");
         }
@@ -201,13 +201,13 @@ impl FreezeManager {
         // Check cache first
         {
             let cache = self.metadata_cache.read();
-            if let Some(docs) = cache.get(owner_token) {
+            if let Some(docs) = cache.get(username) {
                 return Ok(docs.clone());
             }
         }
 
         // Load from filesystem
-        let owner_dir = self.config.save_dir.join("frozen").join(owner_token);
+        let owner_dir = self.config.save_dir.join("frozen").join(username);
         if !owner_dir.exists() {
             return Ok(Vec::new());
         }
@@ -224,18 +224,18 @@ impl FreezeManager {
 
         // Update cache
         let mut cache = self.metadata_cache.write();
-        cache.insert(owner_token.to_string(), documents.clone());
+        cache.insert(username.to_string(), documents.clone());
 
         Ok(documents)
     }
 
     /// Get a specific frozen document content
-    pub fn get_frozen_document(&self, owner_token: &str, document_id: &str) -> Result<String> {
+    pub fn get_frozen_document(&self, username: &str, document_id: &str) -> Result<String> {
         if !self.config.enabled {
             bail!("File freeze feature is not enabled");
         }
 
-        let documents = self.list_frozen_documents(owner_token)?;
+        let documents = self.list_frozen_documents(username)?;
         let doc = documents
             .iter()
             .find(|d| d.document_id == document_id)
@@ -252,16 +252,16 @@ impl FreezeManager {
     }
 
     /// Delete a frozen document
-    pub fn delete_frozen_document(&self, owner_token: &str, document_id: &str) -> Result<()> {
+    pub fn delete_frozen_document(&self, username: &str, document_id: &str) -> Result<()> {
         if !self.config.enabled {
             bail!("File freeze feature is not enabled");
         }
 
-        let owner_dir = self.config.save_dir.join("frozen").join(owner_token);
+        let owner_dir = self.config.save_dir.join("frozen").join(username);
         let metadata_file = owner_dir.join("metadata.json");
 
         if !metadata_file.exists() {
-            bail!("No frozen documents found for this owner");
+            bail!("No frozen documents found for this user");
         }
 
         // Load existing metadata
@@ -299,12 +299,12 @@ impl FreezeManager {
         // Update cache
         let mut cache = self.metadata_cache.write();
         if documents.is_empty() {
-            cache.remove(owner_token);
+            cache.remove(username);
         } else {
-            cache.insert(owner_token.to_string(), documents);
+            cache.insert(username.to_string(), documents);
         }
 
-        info!("Deleted frozen document: id={}, owner_token={}", document_id, owner_token);
+        info!("Deleted frozen document: id={}, username={}", document_id, username);
 
         Ok(())
     }

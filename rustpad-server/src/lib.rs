@@ -13,8 +13,9 @@ use serde::Serialize;
 use tokio::time::{self, Instant};
 use warp::{filters::BoxedFilter, ws::Ws, Filter, Rejection, Reply};
 
-use crate::{database::Database, freeze::FreezeManager, rustpad::Rustpad};
+use crate::{auth::AuthManager, database::Database, freeze::FreezeManager, rustpad::Rustpad};
 
+pub mod auth;
 pub mod database;
 pub mod freeze;
 mod ot;
@@ -60,6 +61,8 @@ struct ServerState {
     database: Option<Database>,
     /// File freeze manager for 30-day persistence.
     freeze_manager: Option<Arc<FreezeManager>>,
+    /// Authentication manager for user accounts.
+    auth_manager: Option<Arc<AuthManager>>,
 }
 
 /// Statistics about the server, returned from an API endpoint.
@@ -82,6 +85,8 @@ pub struct ServerConfig {
     pub database: Option<Database>,
     /// Freeze manager for 30-day document persistence.
     pub freeze_manager: Option<Arc<FreezeManager>>,
+    /// Authentication manager for user accounts.
+    pub auth_manager: Option<Arc<AuthManager>>,
 }
 
 impl Default for ServerConfig {
@@ -90,6 +95,7 @@ impl Default for ServerConfig {
             expiry_days: 1,
             database: None,
             freeze_manager: None,
+            auth_manager: None,
         }
     }
 }
@@ -113,6 +119,7 @@ fn backend(config: ServerConfig) -> BoxedFilter<(impl Reply,)> {
         documents: Default::default(),
         database: config.database,
         freeze_manager: config.freeze_manager.clone(),
+        auth_manager: config.auth_manager.clone(),
     };
     tokio::spawn(cleaner(state.clone(), config.expiry_days));
     
@@ -145,6 +152,7 @@ fn backend(config: ServerConfig) -> BoxedFilter<(impl Reply,)> {
         .and(warp::path!(String / "freeze"))
         .and(warp::post())
         .and(warp::body::json())
+        .and(warp::header::optional("Authorization"))
         .and(state_filter.clone())
         .and_then(freeze_handler);
 
@@ -167,6 +175,18 @@ fn backend(config: ServerConfig) -> BoxedFilter<(impl Reply,)> {
         .and(state_filter.clone())
         .and_then(delete_frozen_handler);
 
+    let register = warp::path!("auth" / "register")
+        .and(warp::post())
+        .and(warp::body::json())
+        .and(state_filter.clone())
+        .and_then(register_handler);
+
+    let login = warp::path!("auth" / "login")
+        .and(warp::post())
+        .and(warp::body::json())
+        .and(state_filter.clone())
+        .and_then(login_handler);
+
     socket
         .or(text)
         .or(stats)
@@ -174,6 +194,8 @@ fn backend(config: ServerConfig) -> BoxedFilter<(impl Reply,)> {
         .or(download)
         .or(list_frozen)
         .or(delete_frozen)
+        .or(register)
+        .or(login)
         .boxed()
 }
 
@@ -279,8 +301,21 @@ async fn persister(id: String, rustpad: Arc<Rustpad>, db: Database) {
 /// Request body for freezing a document
 #[derive(serde::Deserialize)]
 struct FreezeRequest {
-    owner_token: Option<String>,
     language: Option<String>,
+}
+
+/// Request body for authentication
+#[derive(serde::Deserialize)]
+struct AuthRequest {
+    username: String,
+    password: String,
+}
+
+/// Response for authentication
+#[derive(Serialize)]
+struct AuthResponse {
+    username: String,
+    created_at: String,
 }
 
 /// Response for freezing a document
@@ -293,16 +328,57 @@ struct FreezeResponse {
     file_extension: String,
 }
 
+/// Extract username from Basic Auth header
+fn extract_basic_auth(auth_header: Option<String>) -> Result<(String, String), warp::Rejection> {
+    let auth_header = auth_header.ok_or_else(|| {
+        warp::reject::custom(CustomReject(anyhow::anyhow!("Missing Authorization header")))
+    })?;
+
+    let basic = auth_header.strip_prefix("Basic ").ok_or_else(|| {
+        warp::reject::custom(CustomReject(anyhow::anyhow!("Invalid Authorization format")))
+    })?;
+
+    use base64::Engine;
+    let decoded = base64::engine::general_purpose::STANDARD.decode(basic).map_err(|_| {
+        warp::reject::custom(CustomReject(anyhow::anyhow!("Invalid Base64 encoding")))
+    })?;
+
+    let credentials = String::from_utf8(decoded).map_err(|_| {
+        warp::reject::custom(CustomReject(anyhow::anyhow!("Invalid UTF-8 in credentials")))
+    })?;
+
+    let parts: Vec<&str> = credentials.splitn(2, ':').collect();
+    if parts.len() != 2 {
+        return Err(warp::reject::custom(CustomReject(anyhow::anyhow!(
+            "Invalid credentials format"
+        ))));
+    }
+
+    Ok((parts[0].to_string(), parts[1].to_string()))
+}
+
 /// Handler for POST /api/documents/{id}/freeze
 async fn freeze_handler(
     id: String,
     req: FreezeRequest,
+    auth: Option<String>,
     state: ServerState,
 ) -> Result<impl Reply, Rejection> {
     let freeze_manager = state
         .freeze_manager
         .as_ref()
         .ok_or_else(|| warp::reject::custom(CustomReject(anyhow::anyhow!("Freeze feature not enabled"))))?;
+
+    let auth_manager = state
+        .auth_manager
+        .as_ref()
+        .ok_or_else(|| warp::reject::custom(CustomReject(anyhow::anyhow!("Auth not enabled"))))?;
+
+    // Extract and validate credentials
+    let (username, password) = extract_basic_auth(auth)?;
+    auth_manager
+        .login(&username, &password)
+        .map_err(|e| warp::reject::custom(CustomReject(e)))?;
 
     // Get the current document content
     let content = match state.documents.get(&id) {
@@ -330,12 +406,9 @@ async fn freeze_handler(
         })
     }).unwrap_or_else(|| "plaintext".to_string());
 
-    // Get or generate owner token
-    let owner_token = req.owner_token.unwrap_or_else(FreezeManager::generate_owner_token);
-
     // Freeze the document
     let frozen_doc = freeze_manager
-        .freeze_document(&id, &owner_token, &language, &content)
+        .freeze_document(&id, &username, &language, &content)
         .map_err(|e| warp::reject::custom(CustomReject(e)))?;
 
     Ok(warp::reply::json(&FreezeResponse {
@@ -382,15 +455,19 @@ async fn list_frozen_handler(
         .as_ref()
         .ok_or_else(|| warp::reject::custom(CustomReject(anyhow::anyhow!("Freeze feature not enabled"))))?;
 
-    // Extract token from Authorization header
-    let owner_token = auth
-        .and_then(|h| h.strip_prefix("Bearer ").map(String::from))
-        .ok_or_else(|| {
-            warp::reject::custom(CustomReject(anyhow::anyhow!("Missing or invalid Authorization header")))
-        })?;
+    let auth_manager = state
+        .auth_manager
+        .as_ref()
+        .ok_or_else(|| warp::reject::custom(CustomReject(anyhow::anyhow!("Auth not enabled"))))?;
+
+    // Extract and validate credentials
+    let (username, password) = extract_basic_auth(auth)?;
+    auth_manager
+        .login(&username, &password)
+        .map_err(|e| warp::reject::custom(CustomReject(e)))?;
 
     let documents = freeze_manager
-        .list_frozen_documents(&owner_token)
+        .list_frozen_documents(&username)
         .map_err(|e| warp::reject::custom(CustomReject(e)))?;
 
     Ok(warp::reply::json(&documents))
@@ -407,21 +484,65 @@ async fn delete_frozen_handler(
         .as_ref()
         .ok_or_else(|| warp::reject::custom(CustomReject(anyhow::anyhow!("Freeze feature not enabled"))))?;
 
-    // Extract token from Authorization header
-    let owner_token = auth
-        .and_then(|h| h.strip_prefix("Bearer ").map(String::from))
-        .ok_or_else(|| {
-            warp::reject::custom(CustomReject(anyhow::anyhow!("Missing or invalid Authorization header")))
-        })?;
+    let auth_manager = state
+        .auth_manager
+        .as_ref()
+        .ok_or_else(|| warp::reject::custom(CustomReject(anyhow::anyhow!("Auth not enabled"))))?;
+
+    // Extract and validate credentials
+    let (username, password) = extract_basic_auth(auth)?;
+    auth_manager
+        .login(&username, &password)
+        .map_err(|e| warp::reject::custom(CustomReject(e)))?;
 
     freeze_manager
-        .delete_frozen_document(&owner_token, &id)
+        .delete_frozen_document(&username, &id)
         .map_err(|e| warp::reject::custom(CustomReject(e)))?;
 
     Ok(warp::reply::with_status(
         "Document deleted",
         warp::http::StatusCode::OK,
     ))
+}
+
+/// Handler for POST /api/auth/register
+async fn register_handler(
+    req: AuthRequest,
+    state: ServerState,
+) -> Result<impl Reply, Rejection> {
+    let auth_manager = state
+        .auth_manager
+        .as_ref()
+        .ok_or_else(|| warp::reject::custom(CustomReject(anyhow::anyhow!("Auth not enabled"))))?;
+
+    let user = auth_manager
+        .register(&req.username, &req.password)
+        .map_err(|e| warp::reject::custom(CustomReject(e)))?;
+
+    Ok(warp::reply::json(&AuthResponse {
+        username: user.username,
+        created_at: user.created_at,
+    }))
+}
+
+/// Handler for POST /api/auth/login
+async fn login_handler(
+    req: AuthRequest,
+    state: ServerState,
+) -> Result<impl Reply, Rejection> {
+    let auth_manager = state
+        .auth_manager
+        .as_ref()
+        .ok_or_else(|| warp::reject::custom(CustomReject(anyhow::anyhow!("Auth not enabled"))))?;
+
+    let user = auth_manager
+        .login(&req.username, &req.password)
+        .map_err(|e| warp::reject::custom(CustomReject(e)))?;
+
+    Ok(warp::reply::json(&AuthResponse {
+        username: user.username,
+        created_at: user.created_at,
+    }))
 }
 
 /// Cleanup task for expired frozen documents

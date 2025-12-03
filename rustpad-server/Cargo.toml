@@ -6,6 +6,8 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0.40"
+base64 = "0.21"
+bcrypt = "0.15"
 bytecount = "0.6"
 chrono = { version = "0.4", features = ["serde"] }
 dashmap = "4.0.2"

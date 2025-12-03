@@ -1,4 +1,4 @@
-use rustpad_server::{server, database::Database, freeze::{FreezeConfig, FreezeManager}, ServerConfig};
+use rustpad_server::{server, auth::{AuthConfig, AuthManager}, database::Database, freeze::{FreezeConfig, FreezeManager}, ServerConfig};
 
 #[tokio::main]
 async fn main() {
@@ -13,8 +13,18 @@ async fn main() {
     let freeze_config = FreezeConfig::from_env();
     let freeze_manager = if freeze_config.enabled {
         Some(std::sync::Arc::new(
-            FreezeManager::new(freeze_config)
+            FreezeManager::new(freeze_config.clone())
                 .expect("Unable to initialize FreezeManager"),
+        ))
+    } else {
+        None
+    };
+
+    let auth_config = AuthConfig::from_env(freeze_config.enabled, &freeze_config.save_dir);
+    let auth_manager = if auth_config.enabled {
+        Some(std::sync::Arc::new(
+            AuthManager::new(auth_config)
+                .expect("Unable to initialize AuthManager"),
         ))
     } else {
         None
@@ -34,6 +44,7 @@ async fn main() {
             Err(_) => None,
         },
         freeze_manager,
+        auth_manager,
     };
 
     warp::serve(server(config)).run(([0, 0, 0, 0], port)).await;
