@@ -1,0 +1,73 @@
+version: '3.8'
+
+services:
+  rustpad:
+    image: michaeldancurtis/rustpadplus:latest
+    container_name: rustpad
+    environment:
+      # Feature flags
+      - ENABLE_FILE_FREEZE=true
+      - ENABLE_AI=true
+      - ENABLE_ARTIFACTS=true
+      
+      # Directories
+      - SAVE_DIR=/app/frozen_documents
+      - ARTIFACTS_DIR=/app/artifacts
+      
+      # OpenRouter API Key - MUST BE SET AT DEPLOYMENT
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      
+      # Server configuration
+      - PORT=3030
+      - EXPIRY_DAYS=1
+      
+    volumes:
+      # Persistent storage for user data
+      - rustpad-frozen:/app/frozen_documents
+      - rustpad-artifacts:/app/artifacts
+      
+    restart: unless-stopped
+    
+    networks:
+      - traefik
+    
+    labels:
+      # Enable Traefik for this container
+      - "traefik.enable=true"
+      
+      # HTTP Router
+      - "traefik.http.routers.rustpad.rule=Host(`rustpad.thecurtis.cloud`)"
+      - "traefik.http.routers.rustpad.entrypoints=websecure"
+      - "traefik.http.routers.rustpad.tls=true"
+      - "traefik.http.routers.rustpad.tls.certresolver=letsencrypt"
+      
+      # Service
+      - "traefik.http.services.rustpad.loadbalancer.server.port=3030"
+      
+      # Middleware for security headers
+      - "traefik.http.routers.rustpad.middlewares=rustpad-headers"
+      - "traefik.http.middlewares.rustpad-headers.headers.customFrameOptionsValue=SAMEORIGIN"
+      - "traefik.http.middlewares.rustpad-headers.headers.customResponseHeaders.X-Content-Type-Options=nosniff"
+      - "traefik.http.middlewares.rustpad-headers.headers.customResponseHeaders.X-XSS-Protection=1; mode=block"
+      
+      # WebSocket support
+      - "traefik.http.routers.rustpad.middlewares=rustpad-ws"
+      - "traefik.http.middlewares.rustpad-ws.headers.customRequestHeaders.Connection=Upgrade"
+      - "traefik.http.middlewares.rustpad-ws.headers.customRequestHeaders.Upgrade=websocket"
+    
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3030/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+networks:
+  traefik:
+    external: true
+
+volumes:
+  rustpad-frozen:
+    driver: local
+  rustpad-artifacts:
+    driver: local

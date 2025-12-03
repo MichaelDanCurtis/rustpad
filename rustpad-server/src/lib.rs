@@ -685,7 +685,16 @@ async fn ai_models_handler(state: ServerState) -> Result<impl Reply, Rejection> 
         ))));
     }
 
-    let models = ai_manager.get_available_models();
+    // Fetch models dynamically from OpenRouter API
+    // Falls back to static list if API call fails
+    let models = ai_manager
+        .get_available_models_async()
+        .await
+        .unwrap_or_else(|e| {
+            log::warn!("Failed to fetch models dynamically, using fallback: {}", e);
+            ai_manager.get_available_models()
+        });
+    
     Ok(warp::reply::json(&models))
 }
 
