@@ -1,4 +1,4 @@
-use rustpad_server::{server, database::Database, ServerConfig};
+use rustpad_server::{ai::{AiConfig, AiManager}, artifacts::{ArtifactConfig, ArtifactManager}, auth::{AuthConfig, AuthManager}, database::Database, freeze::{FreezeConfig, FreezeManager}, server, ServerConfig};
 
 #[tokio::main]
 async fn main() {
@@ -9,6 +9,46 @@ async fn main() {
         .unwrap_or_else(|_| String::from("3030"))
         .parse()
         .expect("Unable to parse PORT");
+
+    let freeze_config = FreezeConfig::from_env();
+    let freeze_manager = if freeze_config.enabled {
+        Some(std::sync::Arc::new(
+            FreezeManager::new(freeze_config.clone())
+                .expect("Unable to initialize FreezeManager"),
+        ))
+    } else {
+        None
+    };
+
+    let auth_config = AuthConfig::from_env(freeze_config.enabled, &freeze_config.save_dir);
+    let auth_manager = if auth_config.enabled {
+        Some(std::sync::Arc::new(
+            AuthManager::new(auth_config)
+                .expect("Unable to initialize AuthManager"),
+        ))
+    } else {
+        None
+    };
+
+    let ai_config = AiConfig::from_env();
+    let ai_manager = if ai_config.enabled {
+        Some(std::sync::Arc::new(
+            AiManager::new(ai_config)
+                .expect("Unable to initialize AiManager"),
+        ))
+    } else {
+        None
+    };
+
+    let artifact_config = ArtifactConfig::from_env();
+    let artifact_manager = if artifact_config.enabled {
+        Some(std::sync::Arc::new(
+            ArtifactManager::new(artifact_config)
+                .expect("Unable to initialize ArtifactManager"),
+        ))
+    } else {
+        None
+    };
 
     let config = ServerConfig {
         expiry_days: std::env::var("EXPIRY_DAYS")
@@ -23,6 +63,10 @@ async fn main() {
             ),
             Err(_) => None,
         },
+        freeze_manager,
+        auth_manager,
+        ai_manager,
+        artifact_manager,
     };
 
     warp::serve(server(config)).run(([0, 0, 0, 0], port)).await;

@@ -5,9 +5,11 @@ import { useEffect, useRef, useState } from "react";
 import { VscChevronRight, VscFolderOpened, VscGist } from "react-icons/vsc";
 import useLocalStorageState from "use-local-storage-state";
 
-import rustpadRaw from "../rustpad-server/src/rustpad.rs?raw";
+import AdminPanel from "./AdminPanel";
+import AiPanel from "./AiPanel";
+import FileBrowserModal from "./FileBrowserModal";
 import Footer from "./Footer";
-import ReadCodeConfirm from "./ReadCodeConfirm";
+import LoginModal from "./LoginModal";
 import Sidebar from "./Sidebar";
 import animals from "./animals.json";
 import languages from "./languages.json";
@@ -48,7 +50,22 @@ function App() {
   const rustpad = useRef<Rustpad>();
   const id = useHash();
 
-  const [readCodeConfirmOpen, setReadCodeConfirmOpen] = useState(false);
+  const [fileBrowserOpen, setFileBrowserOpen] = useState(false);
+  const [loginModalOpen, setLoginModalOpen] = useState(false);
+  const [aiPanelOpen, setAiPanelOpen] = useState(false);
+  const [adminPanelOpen, setAdminPanelOpen] = useState(false);
+  const [username, setUsername] = useLocalStorageState<string | null>("rustpad_username", {
+    defaultValue: null,
+  });
+  const [password, setPassword] = useLocalStorageState<string | null>("rustpad_password", {
+    defaultValue: null,
+  });
+  const [aiEnabled, setAiEnabled] = useLocalStorageState<boolean>("rustpad_ai_enabled", {
+    defaultValue: false,
+  });
+  const [isAdmin, setIsAdmin] = useLocalStorageState<boolean>("rustpad_is_admin", {
+    defaultValue: false,
+  });
 
   useEffect(() => {
     if (editor?.getModel()) {
@@ -110,31 +127,147 @@ function App() {
     }
   }
 
-  function handleLoadSample(confirmed: boolean) {
-    if (editor?.getModel()) {
-      const model = editor.getModel()!;
-      const range = model.getFullModelRange();
+  function handleDarkModeChange() {
+    setDarkMode(!darkMode);
+  }
 
-      // If there are at least 10 lines of code, ask for confirmation.
-      if (range.endLineNumber >= 10 && !confirmed) {
-        setReadCodeConfirmOpen(true);
-        return;
+  async function handleFreeze() {
+    // Check if user is logged in
+    if (!username || !password) {
+      setLoginModalOpen(true);
+      return;
+    }
+
+    try {
+      const authHeader = btoa(`${username}:${password}`);
+      const response = await fetch(`/api/documents/${id}/freeze`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Basic ${authHeader}`,
+        },
+        body: JSON.stringify({
+          language: language !== "plaintext" ? language : undefined,
+        }),
+      });
+
+      if (!response.ok) {
+        const error = await response.text();
+        throw new Error(error || "Failed to freeze document");
       }
 
-      model.pushEditOperations(
-        editor.getSelections(),
-        [{ range, text: rustpadRaw }],
-        () => null,
-      );
-      editor.setPosition({ column: 0, lineNumber: 0 });
-      if (language !== "rust") {
-        handleLanguageChange("rust");
+      const result = await response.json();
+      const expiryDate = new Date(result.expires_at);
+      
+      toast({
+        title: "Document frozen!",
+        description: (
+          <>
+            Saved as <Text as="span" fontWeight="semibold">{result.document_id}.{result.file_extension}</Text>.
+            <br />
+            Expires: {expiryDate.toLocaleDateString()}
+          </>
+        ),
+        status: "success",
+        duration: 6000,
+        isClosable: true,
+      });
+    } catch (error) {
+      toast({
+        title: "Freeze failed",
+        description: error instanceof Error ? error.message : "Unknown error",
+        status: "error",
+        duration: 4000,
+        isClosable: true,
+      });
+    }
+  }
+
+  function handleDownload() {
+    window.location.href = `/api/documents/${id}/download`;
+    toast({
+      title: "Downloading",
+      description: "Your document is being downloaded",
+      status: "info",
+      duration: 2000,
+      isClosable: true,
+    });
+  }
+
+  function handleNewDocument() {
+    // Generate a random document ID (similar to how the app generates initial IDs)
+    const randomId = Math.random().toString(36).substring(2, 15);
+    window.location.hash = randomId;
+    toast({
+      title: "New document created",
+      description: "You can start editing or share the link with others",
+      status: "success",
+      duration: 3000,
+      isClosable: true,
+    });
+  }
+
+  function handleLoginSuccess(user: string, pass: string) {
+    setUsername(user);
+    setPassword(pass);
+    // Update ai_enabled and is_admin from localStorage (set by LoginModal)
+    const aiEnabledStr = localStorage.getItem("rustpad_ai_enabled");
+    setAiEnabled(aiEnabledStr === "true");
+    const isAdminStr = localStorage.getItem("rustpad_is_admin");
+    setIsAdmin(isAdminStr === "true");
+  }
+
+  function handleFilesClick() {
+    if (!username || !password) {
+      setLoginModalOpen(true);
+    } else {
+      setFileBrowserOpen(true);
+    }
+  }
+
+  function handleAskAI() {
+    if (!username || !password) {
+      setLoginModalOpen(true);
+      return;
+    }
+    if (!aiEnabled) {
+      toast({
+        title: "AI features not enabled",
+        description: "Contact an administrator to enable AI features for your account",
+        status: "warning",
+        duration: 4000,
+        isClosable: true,
+      });
+      return;
+    }
+    setAiPanelOpen(true);
+  }
+
+  function handleApplyEdit(content: string) {
+    if (editor) {
+      const model = editor.getModel();
+      if (model) {
+        model.setValue(content);
       }
     }
   }
 
-  function handleDarkModeChange() {
-    setDarkMode(!darkMode);
+  function handleAdminPanel() {
+    if (!username || !password) {
+      setLoginModalOpen(true);
+      return;
+    }
+    if (!isAdmin) {
+      toast({
+        title: "Access denied",
+        description: "You do not have administrator privileges",
+        status: "error",
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
+    setAdminPanelOpen(true);
   }
 
   return (
@@ -165,17 +298,13 @@ function App() {
           users={users}
           onDarkModeChange={handleDarkModeChange}
           onLanguageChange={handleLanguageChange}
-          onLoadSample={() => handleLoadSample(false)}
           onChangeName={(name) => name.length > 0 && setName(name)}
           onChangeColor={() => setHue(generateHue())}
-        />
-        <ReadCodeConfirm
-          isOpen={readCodeConfirmOpen}
-          onClose={() => setReadCodeConfirmOpen(false)}
-          onConfirm={() => {
-            handleLoadSample(true);
-            setReadCodeConfirmOpen(false);
-          }}
+          onFreeze={handleFreeze}
+          onDownload={handleDownload}
+          onNewDocument={handleNewDocument}
+          onAskAI={handleAskAI}
+          aiEnabled={aiEnabled}
         />
 
         <Flex flex={1} minW={0} h="100%" direction="column" overflow="hidden">
@@ -207,7 +336,37 @@ function App() {
           </Box>
         </Flex>
       </Flex>
-      <Footer />
+      <Footer onOpenFiles={handleFilesClick} onOpenAdmin={handleAdminPanel} isAdmin={isAdmin} />
+      <FileBrowserModal
+        isOpen={fileBrowserOpen}
+        onClose={() => setFileBrowserOpen(false)}
+        darkMode={darkMode}
+        username={username}
+        password={password}
+        onAuthRequired={() => setLoginModalOpen(true)}
+      />
+      <LoginModal
+        isOpen={loginModalOpen}
+        onClose={() => setLoginModalOpen(false)}
+        onSuccess={handleLoginSuccess}
+        darkMode={darkMode}
+      />
+      <AiPanel
+        isOpen={aiPanelOpen}
+        onClose={() => setAiPanelOpen(false)}
+        darkMode={darkMode}
+        username={username}
+        password={password}
+        documentContent={editor?.getValue() || ""}
+        onApplyEdit={handleApplyEdit}
+      />
+      <AdminPanel
+        isOpen={adminPanelOpen}
+        onClose={() => setAdminPanelOpen(false)}
+        darkMode={darkMode}
+        username={username}
+        password={password}
+      />
     </Flex>
   );
 }

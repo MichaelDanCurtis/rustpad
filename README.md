@@ -72,6 +72,23 @@ For the WebAssembly component, you can run tests in a headless browser with
 wasm-pack test --chrome --headless rustpad-wasm
 ```
 
+## New Features
+
+This fork adds several powerful features:
+
+### File Freeze (30-day persistence)
+- Freeze documents for 30 days with username/password authentication
+- Download frozen documents with proper file extensions (.rs, .py, .js, etc.)
+- Browse and manage your frozen files via "My Files" button
+- Automatic cleanup of expired documents
+
+### AI-Powered Editing
+- Chat interface with AI models via OpenRouter
+- Multiple model selection (Claude, GPT-4, Gemini, etc.)
+- AI can suggest and apply document edits
+- Requires authentication and per-user AI access control
+- Admin can enable AI features for specific users during registration
+
 ## Configuration
 
 Although the default behavior of Rustpad is to store documents solely in memory
@@ -91,6 +108,17 @@ following environment variables on startup:
 - `RUST_LOG`: Directives that control application logging, see the
   [env_logger](https://docs.rs/env_logger/#enabling-logging) docs for more
   information.
+
+### File Freeze Configuration
+
+- `ENABLE_FILE_FREEZE`: Set to `true` to enable 30-day document persistence (default: `false`).
+- `SAVE_DIR`: Directory where frozen documents and user data are stored (default: `./frozen_documents`).
+
+### AI Features Configuration
+
+- `ENABLE_AI`: Set to `true` to enable AI features (default: `false`).
+- `OPENROUTER_API_KEY`: Your OpenRouter API key (required if AI is enabled). Get one at [openrouter.ai](https://openrouter.ai/).
+- `OPENROUTER_BASE_URL`: Custom OpenRouter API base URL (optional, defaults to `https://openrouter.ai/api/v1`).
 
 ## Deployment
 

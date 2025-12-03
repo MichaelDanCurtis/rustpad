@@ -1,0 +1,46 @@
+version: '3.8'
+
+services:
+  rustpad:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: rustpad
+    ports:
+      - "3030:3030"
+    environment:
+      # Feature flags
+      - ENABLE_FILE_FREEZE=true
+      - ENABLE_AI=true
+      - ENABLE_ARTIFACTS=true
+      
+      # Directories
+      - SAVE_DIR=/app/frozen_documents
+      - ARTIFACTS_DIR=/app/artifacts
+      
+      # OpenRouter API Key (set this in .env file)
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
+      
+      # Server configuration
+      - PORT=3030
+      - EXPIRY_DAYS=1
+      
+    volumes:
+      # Persistent storage for user data
+      - rustpad-frozen:/app/frozen_documents
+      - rustpad-artifacts:/app/artifacts
+      
+    restart: unless-stopped
+    
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3030/api/stats"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+volumes:
+  rustpad-frozen:
+    driver: local
+  rustpad-artifacts:
+    driver: local

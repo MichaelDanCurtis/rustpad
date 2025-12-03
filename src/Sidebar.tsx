@@ -6,14 +6,14 @@ import {
   Input,
   InputGroup,
   InputRightElement,
-  Link,
   Select,
   Stack,
   Switch,
   Text,
   useToast,
+  HStack,
 } from "@chakra-ui/react";
-import { VscRepo } from "react-icons/vsc";
+import { VscSave, VscCloudDownload, VscNewFile, VscSparkle } from "react-icons/vsc";
 
 import ConnectionStatus from "./ConnectionStatus";
 import User from "./User";
@@ -29,9 +29,13 @@ export type SidebarProps = {
   users: Record<number, UserInfo>;
   onDarkModeChange: () => void;
   onLanguageChange: (language: string) => void;
-  onLoadSample: () => void;
   onChangeName: (name: string) => void;
   onChangeColor: () => void;
+  onFreeze: () => void;
+  onDownload: () => void;
+  onNewDocument: () => void;
+  onAskAI?: () => void;
+  aiEnabled?: boolean;
 };
 
 function Sidebar({
@@ -43,9 +47,13 @@ function Sidebar({
   users,
   onDarkModeChange,
   onLanguageChange,
-  onLoadSample,
   onChangeName,
   onChangeColor,
+  onFreeze,
+  onDownload,
+  onNewDocument,
+  onAskAI,
+  aiEnabled,
 }: SidebarProps) {
   const toast = useToast();
 
@@ -124,6 +132,64 @@ function Sidebar({
       </InputGroup>
 
       <Heading mt={4} mb={1.5} size="sm">
+        Document Actions
+      </Heading>
+      <Button
+        size="sm"
+        colorScheme={darkMode ? "whiteAlpha" : "blackAlpha"}
+        borderColor={darkMode ? "purple.400" : "purple.600"}
+        color={darkMode ? "purple.400" : "purple.600"}
+        variant="outline"
+        leftIcon={<VscNewFile />}
+        w="full"
+        mb={2}
+        onClick={onNewDocument}
+      >
+        Create New Document
+      </Button>
+      {aiEnabled && onAskAI && (
+        <Button
+          size="sm"
+          colorScheme={darkMode ? "whiteAlpha" : "blackAlpha"}
+          borderColor={darkMode ? "yellow.400" : "yellow.600"}
+          color={darkMode ? "yellow.400" : "yellow.600"}
+          variant="outline"
+          leftIcon={<VscSparkle />}
+          w="full"
+          mb={2}
+          onClick={onAskAI}
+        >
+          Ask AI
+        </Button>
+      )}
+      <HStack spacing={2}>
+        <Button
+          size="sm"
+          colorScheme={darkMode ? "whiteAlpha" : "blackAlpha"}
+          borderColor={darkMode ? "green.400" : "green.600"}
+          color={darkMode ? "green.400" : "green.600"}
+          variant="outline"
+          leftIcon={<VscSave />}
+          flex={1}
+          onClick={onFreeze}
+        >
+          Freeze 30d
+        </Button>
+        <Button
+          size="sm"
+          colorScheme={darkMode ? "whiteAlpha" : "blackAlpha"}
+          borderColor={darkMode ? "blue.400" : "blue.600"}
+          color={darkMode ? "blue.400" : "blue.600"}
+          variant="outline"
+          leftIcon={<VscCloudDownload />}
+          flex={1}
+          onClick={onDownload}
+        >
+          Download
+        </Button>
+      </HStack>
+
+      <Heading mt={4} mb={1.5} size="sm">
         Active Users
       </Heading>
       <Stack spacing={0} mb={1.5} fontSize="sm">
@@ -138,43 +204,6 @@ function Sidebar({
           <User key={id} info={info} darkMode={darkMode} />
         ))}
       </Stack>
-
-      <Heading mt={4} mb={1.5} size="sm">
-        About
-      </Heading>
-      <Text fontSize="sm" mb={1.5}>
-        <strong>Rustpad</strong> is an open-source collaborative text editor
-        based on the <em>operational transformation</em> algorithm.
-      </Text>
-      <Text fontSize="sm" mb={1.5}>
-        Share a link to this pad with others, and they can edit from their
-        browser while seeing your changes in real time.
-      </Text>
-      <Text fontSize="sm" mb={1.5}>
-        Built using Rust and TypeScript. See the{" "}
-        <Link
-          color="blue.600"
-          fontWeight="semibold"
-          href="https://github.com/ekzhang/rustpad"
-          isExternal
-        >
-          GitHub repository
-        </Link>{" "}
-        for details.
-      </Text>
-
-      <Button
-        size="sm"
-        colorScheme={darkMode ? "whiteAlpha" : "blackAlpha"}
-        borderColor={darkMode ? "purple.400" : "purple.600"}
-        color={darkMode ? "purple.400" : "purple.600"}
-        variant="outline"
-        leftIcon={<VscRepo />}
-        mt={1}
-        onClick={onLoadSample}
-      >
-        Read the code
-      </Button>
     </Container>
   );
 }
