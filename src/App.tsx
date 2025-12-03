@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { VscChevronRight, VscFolderOpened, VscGist } from "react-icons/vsc";
 import useLocalStorageState from "use-local-storage-state";
 
+import AiPanel from "./AiPanel";
 import FileBrowserModal from "./FileBrowserModal";
 import Footer from "./Footer";
 import LoginModal from "./LoginModal";
@@ -50,11 +51,15 @@ function App() {
 
   const [fileBrowserOpen, setFileBrowserOpen] = useState(false);
   const [loginModalOpen, setLoginModalOpen] = useState(false);
+  const [aiPanelOpen, setAiPanelOpen] = useState(false);
   const [username, setUsername] = useLocalStorageState<string | null>("rustpad_username", {
     defaultValue: null,
   });
   const [password, setPassword] = useLocalStorageState<string | null>("rustpad_password", {
     defaultValue: null,
+  });
+  const [aiEnabled, setAiEnabled] = useLocalStorageState<boolean>("rustpad_ai_enabled", {
+    defaultValue: false,
   });
 
   useEffect(() => {
@@ -200,6 +205,9 @@ function App() {
   function handleLoginSuccess(user: string, pass: string) {
     setUsername(user);
     setPassword(pass);
+    // Update ai_enabled from localStorage (set by LoginModal)
+    const aiEnabledStr = localStorage.getItem("rustpad_ai_enabled");
+    setAiEnabled(aiEnabledStr === "true");
   }
 
   function handleFilesClick() {
@@ -207,6 +215,33 @@ function App() {
       setLoginModalOpen(true);
     } else {
       setFileBrowserOpen(true);
+    }
+  }
+
+  function handleAskAI() {
+    if (!username || !password) {
+      setLoginModalOpen(true);
+      return;
+    }
+    if (!aiEnabled) {
+      toast({
+        title: "AI features not enabled",
+        description: "Contact an administrator to enable AI features for your account",
+        status: "warning",
+        duration: 4000,
+        isClosable: true,
+      });
+      return;
+    }
+    setAiPanelOpen(true);
+  }
+
+  function handleApplyEdit(content: string) {
+    if (editor) {
+      const model = editor.getModel();
+      if (model) {
+        model.setValue(content);
+      }
     }
   }
 
@@ -243,6 +278,8 @@ function App() {
           onFreeze={handleFreeze}
           onDownload={handleDownload}
           onNewDocument={handleNewDocument}
+          onAskAI={handleAskAI}
+          aiEnabled={aiEnabled}
         />
 
         <Flex flex={1} minW={0} h="100%" direction="column" overflow="hidden">
@@ -288,6 +325,15 @@ function App() {
         onClose={() => setLoginModalOpen(false)}
         onSuccess={handleLoginSuccess}
         darkMode={darkMode}
+      />
+      <AiPanel
+        isOpen={aiPanelOpen}
+        onClose={() => setAiPanelOpen(false)}
+        darkMode={darkMode}
+        username={username}
+        password={password}
+        documentContent={editor?.getValue() || ""}
+        onApplyEdit={handleApplyEdit}
       />
     </Flex>
   );

@@ -13,7 +13,7 @@ import {
   useToast,
   HStack,
 } from "@chakra-ui/react";
-import { VscSave, VscCloudDownload, VscNewFile } from "react-icons/vsc";
+import { VscSave, VscCloudDownload, VscNewFile, VscSparkle } from "react-icons/vsc";
 
 import ConnectionStatus from "./ConnectionStatus";
 import User from "./User";
@@ -34,6 +34,8 @@ export type SidebarProps = {
   onFreeze: () => void;
   onDownload: () => void;
   onNewDocument: () => void;
+  onAskAI?: () => void;
+  aiEnabled?: boolean;
 };
 
 function Sidebar({
@@ -50,6 +52,8 @@ function Sidebar({
   onFreeze,
   onDownload,
   onNewDocument,
+  onAskAI,
+  aiEnabled,
 }: SidebarProps) {
   const toast = useToast();
 
@@ -143,6 +147,21 @@ function Sidebar({
       >
         Create New Document
       </Button>
+      {aiEnabled && onAskAI && (
+        <Button
+          size="sm"
+          colorScheme={darkMode ? "whiteAlpha" : "blackAlpha"}
+          borderColor={darkMode ? "yellow.400" : "yellow.600"}
+          color={darkMode ? "yellow.400" : "yellow.600"}
+          variant="outline"
+          leftIcon={<VscSparkle />}
+          w="full"
+          mb={2}
+          onClick={onAskAI}
+        >
+          Ask AI
+        </Button>
+      )}
       <HStack spacing={2}>
         <Button
           size="sm"
