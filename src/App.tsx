@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { VscChevronRight, VscFolderOpened, VscGist } from "react-icons/vsc";
 import useLocalStorageState from "use-local-storage-state";
 
+import AdminPanel from "./AdminPanel";
 import AiPanel from "./AiPanel";
 import FileBrowserModal from "./FileBrowserModal";
 import Footer from "./Footer";
@@ -52,6 +53,7 @@ function App() {
   const [fileBrowserOpen, setFileBrowserOpen] = useState(false);
   const [loginModalOpen, setLoginModalOpen] = useState(false);
   const [aiPanelOpen, setAiPanelOpen] = useState(false);
+  const [adminPanelOpen, setAdminPanelOpen] = useState(false);
   const [username, setUsername] = useLocalStorageState<string | null>("rustpad_username", {
     defaultValue: null,
   });
@@ -59,6 +61,9 @@ function App() {
     defaultValue: null,
   });
   const [aiEnabled, setAiEnabled] = useLocalStorageState<boolean>("rustpad_ai_enabled", {
+    defaultValue: false,
+  });
+  const [isAdmin, setIsAdmin] = useLocalStorageState<boolean>("rustpad_is_admin", {
     defaultValue: false,
   });
 
@@ -205,9 +210,11 @@ function App() {
   function handleLoginSuccess(user: string, pass: string) {
     setUsername(user);
     setPassword(pass);
-    // Update ai_enabled from localStorage (set by LoginModal)
+    // Update ai_enabled and is_admin from localStorage (set by LoginModal)
     const aiEnabledStr = localStorage.getItem("rustpad_ai_enabled");
     setAiEnabled(aiEnabledStr === "true");
+    const isAdminStr = localStorage.getItem("rustpad_is_admin");
+    setIsAdmin(isAdminStr === "true");
   }
 
   function handleFilesClick() {
@@ -243,6 +250,24 @@ function App() {
         model.setValue(content);
       }
     }
+  }
+
+  function handleAdminPanel() {
+    if (!username || !password) {
+      setLoginModalOpen(true);
+      return;
+    }
+    if (!isAdmin) {
+      toast({
+        title: "Access denied",
+        description: "You do not have administrator privileges",
+        status: "error",
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
+    setAdminPanelOpen(true);
   }
 
   return (
@@ -311,7 +336,7 @@ function App() {
           </Box>
         </Flex>
       </Flex>
-      <Footer onOpenFiles={handleFilesClick} />
+      <Footer onOpenFiles={handleFilesClick} onOpenAdmin={handleAdminPanel} isAdmin={isAdmin} />
       <FileBrowserModal
         isOpen={fileBrowserOpen}
         onClose={() => setFileBrowserOpen(false)}
@@ -334,6 +359,13 @@ function App() {
         password={password}
         documentContent={editor?.getValue() || ""}
         onApplyEdit={handleApplyEdit}
+      />
+      <AdminPanel
+        isOpen={adminPanelOpen}
+        onClose={() => setAdminPanelOpen(false)}
+        darkMode={darkMode}
+        username={username}
+        password={password}
       />
     </Flex>
   );

@@ -1,5 +1,5 @@
 import { Flex, Icon, Text, Button } from "@chakra-ui/react";
-import { VscRemote, VscFolder } from "react-icons/vsc";
+import { VscRemote, VscFolder, VscShield } from "react-icons/vsc";
 
 const version =
   typeof import.meta.env.VITE_SHA === "string"
@@ -8,9 +8,11 @@ const version =
 
 type FooterProps = {
   onOpenFiles?: () => void;
+  onOpenAdmin?: () => void;
+  isAdmin?: boolean;
 };
 
-function Footer({ onOpenFiles }: FooterProps) {
+function Footer({ onOpenFiles, onOpenAdmin, isAdmin }: FooterProps) {
   return (
     <Flex h="22px" bgColor="#0071c3" color="white">
       <Flex
@@ -37,6 +39,21 @@ function Footer({ onOpenFiles }: FooterProps) {
           _hover={{ bgColor: "rgba(255, 255, 255, 0.1)" }}
         >
           My Files
+        </Button>
+      )}
+      {isAdmin && onOpenAdmin && (
+        <Button
+          size="xs"
+          variant="ghost"
+          color="white"
+          leftIcon={<VscShield />}
+          onClick={onOpenAdmin}
+          h="100%"
+          borderRadius={0}
+          fontSize="xs"
+          _hover={{ bgColor: "rgba(255, 255, 255, 0.1)" }}
+        >
+          Admin
         </Button>
       )}
     </Flex>
