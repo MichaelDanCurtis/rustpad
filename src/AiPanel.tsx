@@ -118,14 +118,21 @@ function AiPanel({
 
 ${documentContent}
 
-IMPORTANT INSTRUCTIONS:
-- When the user asks for edits or changes, output ONLY the complete, updated document content
-- Do NOT include markdown code blocks (\`\`\`) unless the document itself contains them
-- Do NOT add explanations, comments, or descriptions before or after the code
-- Do NOT say "here is the updated code" or similar phrases
-- Your response should be ready to directly replace the entire document
-- If generating new content, output only the raw content without any formatting
-- For multi-file outputs, separate each file clearly with a comment indicating the filename`,
+CRITICAL OUTPUT FORMAT RULES - FOLLOW EXACTLY:
+1. OUTPUT ONLY EXECUTABLE CODE/CONFIG - No explanations, no markdown, no preambles
+2. DO NOT write "Here is..." or "I've created..." or any introductory text
+3. DO NOT wrap output in markdown code blocks (\`\`\`) unless the document itself uses them
+4. DO NOT include installation commands (brew, apt-get, npm install, etc.) in your main output
+5. START your response with the actual code/content, not with any commentary
+6. END your response with the actual code/content, not with usage instructions or explanations
+7. If generating multiple files, use filename comments like "# filename.ext" to separate them
+8. Your ENTIRE response should be copy-paste ready to replace the document
+
+EXAMPLE - User asks for "a Python hello world":
+WRONG: "Here is a Python hello world program:\n\`\`\`python\nprint('Hello')\n\`\`\`\nTo run this..."  
+CORRECT: "print('Hello, World!')"
+
+Remember: NO markdown formatting, NO explanations, JUST the code/content!`,
       });
     }
 
@@ -193,26 +200,75 @@ IMPORTANT INSTRUCTIONS:
   }
 
   function extractCodeFromMessage(content: string): string {
-    // Try to extract code from markdown code blocks
-    const codeBlockMatch = content.match(/```[\w]*\n([\s\S]*?)```/);
-    if (codeBlockMatch) {
-      return codeBlockMatch[1].trim();
+    // Extract ALL code blocks from the message
+    const codeBlockRegex = /```[\w]*\n([\s\S]*?)```/g;
+    const matches = [...content.matchAll(codeBlockRegex)];
+    
+    if (matches.length > 0) {
+      // Filter out installation commands and other non-code blocks
+      const codeBlocks = matches
+        .map(m => m[1].trim())
+        .filter(block => {
+          // Skip blocks that are just installation commands
+          const lines = block.split('\n');
+          if (lines.length <= 3) {
+            const text = block.toLowerCase();
+            if (text.includes('brew install') || 
+                text.includes('apt-get install') ||
+                text.includes('npm install') ||
+                text.includes('pip install') ||
+                text.includes('choco install')) {
+              return false;
+            }
+          }
+          return true;
+        });
+      
+      if (codeBlocks.length > 1) {
+        // Multiple code blocks - join them with file separators
+        return codeBlocks.map((block, idx) => {
+          const lines = block.split('\n');
+          // Try to detect filename from first line comment
+          const firstLine = lines[0];
+          if (firstLine.startsWith('#') || firstLine.startsWith('//') || firstLine.startsWith('<!--')) {
+            return block;
+          }
+          return `# File ${idx + 1}\n${block}`;
+        }).join('\n\n');
+      } else if (codeBlocks.length === 1) {
+        return codeBlocks[0];
+      }
     }
     
-    // If no code block found, try to remove common AI preambles
+    // No code blocks found - try to clean up the raw response
     let cleaned = content;
+    
+    // Remove common preambles
     const preambles = [
-      /^here is the (updated|modified|corrected|revised).*?:\s*/i,
-      /^here's the (updated|modified|corrected|revised).*?:\s*/i,
-      /^(updated|modified|corrected|revised) (code|content|document):\s*/i,
-      /^sure[,!]?\s+(here is|here's).*?:\s*/i,
+      /^(here is|here's|i've created|i've made|i've updated|i've added|i've modified|i've corrected|i've revised).*?:\s*/gim,
+      /^(updated|modified|corrected|revised|new|created)\s+(code|content|document|file|version).*?:\s*/gim,
+      /^sure[,!]?\s+.*?:\s*/gim,
+      /^(let me|i'll|i will).*?:\s*/gim,
     ];
     
     for (const pattern of preambles) {
       cleaned = cleaned.replace(pattern, '');
     }
     
-    return cleaned.trim();
+    // Remove trailing explanations (paragraphs after the main content)
+    const lines = cleaned.split('\n');
+    let lastCodeLine = lines.length - 1;
+    
+    // Find the last line that looks like code (not explanation)
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const line = lines[i].trim();
+      if (line && !line.match(/^(this|the|you|note:|explanation:|to use|usage:)/i)) {
+        lastCodeLine = i;
+        break;
+      }
+    }
+    
+    return lines.slice(0, lastCodeLine + 1).join('\n').trim();
   }
 
   function handleApplyLastEdit() {
