@@ -134,6 +134,15 @@ pub struct AiManager {
     client: reqwest::Client,
 }
 
+impl std::fmt::Debug for AiManager {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AiManager")
+            .field("config", &self.config)
+            .field("client", &"<reqwest::Client>")
+            .finish()
+    }
+}
+
 impl AiManager {
     /// Create a new AI manager
     pub fn new(config: AiConfig) -> Result<Self> {
