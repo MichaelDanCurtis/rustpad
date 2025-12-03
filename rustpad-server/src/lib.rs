@@ -257,6 +257,19 @@ fn backend(config: ServerConfig) -> BoxedFilter<(impl Reply,)> {
         .and(state_filter.clone())
         .and_then(admin_delete_user_handler);
 
+    let admin_get_settings = warp::path!("admin" / "settings")
+        .and(warp::get())
+        .and(warp::header::optional("Authorization"))
+        .and(state_filter.clone())
+        .and_then(admin_get_settings_handler);
+
+    let admin_update_api_key = warp::path!("admin" / "settings" / "api-key")
+        .and(warp::put())
+        .and(warp::body::json())
+        .and(warp::header::optional("Authorization"))
+        .and(state_filter.clone())
+        .and_then(admin_update_api_key_handler);
+
     socket
         .or(text)
         .or(stats)
@@ -275,6 +288,8 @@ fn backend(config: ServerConfig) -> BoxedFilter<(impl Reply,)> {
         .or(admin_users)
         .or(admin_update_ai)
         .or(admin_delete_user)
+        .or(admin_get_settings)
+        .or(admin_update_api_key)
         .boxed()
 }
 
@@ -946,6 +961,83 @@ async fn admin_delete_user_handler(
 
     Ok(warp::reply::with_status(
         "User deleted",
+        warp::http::StatusCode::OK,
+    ))
+}
+
+/// Admin settings response
+#[derive(Serialize)]
+struct AdminSettings {
+    ai_enabled: bool,
+    api_key_configured: bool,
+    api_key_preview: Option<String>,
+}
+
+/// Update API key request
+#[derive(serde::Deserialize)]
+struct UpdateApiKeyRequest {
+    api_key: String,
+}
+
+/// Handler for GET /api/admin/settings
+async fn admin_get_settings_handler(
+    auth: Option<String>,
+    state: ServerState,
+) -> Result<impl Reply, Rejection> {
+    let auth_manager = state
+        .auth_manager
+        .as_ref()
+        .ok_or_else(|| warp::reject::custom(CustomReject(anyhow::anyhow!("Auth not enabled"))))?;
+
+    // Check admin access
+    check_admin_access(auth, auth_manager)?;
+
+    let ai_manager = state.ai_manager.as_ref();
+    let (ai_enabled, api_key_configured, api_key_preview) = if let Some(ai) = ai_manager {
+        let key = ai.get_api_key();
+        let configured = !key.is_empty();
+        let preview = if configured {
+            Some(format!("{}...{}", &key[..8.min(key.len())], &key[key.len().saturating_sub(4)..]))
+        } else {
+            None
+        };
+        (ai.is_enabled(), configured, preview)
+    } else {
+        (false, false, None)
+    };
+
+    Ok(warp::reply::json(&AdminSettings {
+        ai_enabled,
+        api_key_configured,
+        api_key_preview,
+    }))
+}
+
+/// Handler for PUT /api/admin/settings/api-key
+async fn admin_update_api_key_handler(
+    req: UpdateApiKeyRequest,
+    auth: Option<String>,
+    state: ServerState,
+) -> Result<impl Reply, Rejection> {
+    let auth_manager = state
+        .auth_manager
+        .as_ref()
+        .ok_or_else(|| warp::reject::custom(CustomReject(anyhow::anyhow!("Auth not enabled"))))?;
+
+    // Check admin access
+    check_admin_access(auth, auth_manager)?;
+
+    let ai_manager = state
+        .ai_manager
+        .as_ref()
+        .ok_or_else(|| warp::reject::custom(CustomReject(anyhow::anyhow!("AI not enabled"))))?;
+
+    ai_manager
+        .update_api_key(&req.api_key)
+        .map_err(|e| warp::reject::custom(CustomReject(e)))?;
+
+    Ok(warp::reply::with_status(
+        "API key updated",
         warp::http::StatusCode::OK,
     ))
 }

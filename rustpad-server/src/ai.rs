@@ -3,6 +3,7 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use log::info;
+use std::sync::{Arc, RwLock};
 
 /// Configuration for AI features
 #[derive(Debug, Clone)]
@@ -128,9 +129,8 @@ pub struct ModelPricing {
 }
 
 /// Manager for AI operations
-#[derive(Debug)]
 pub struct AiManager {
-    config: AiConfig,
+    config: Arc<RwLock<AiConfig>>,
     client: reqwest::Client,
 }
 
@@ -146,12 +146,30 @@ impl AiManager {
             info!("AI features enabled with OpenRouter");
         }
 
-        Ok(Self { config, client })
+        Ok(Self { 
+            config: Arc::new(RwLock::new(config)),
+            client 
+        })
     }
 
     /// Check if AI is enabled
     pub fn is_enabled(&self) -> bool {
-        self.config.enabled && !self.config.api_key.is_empty()
+        let config = self.config.read().unwrap();
+        config.enabled && !config.api_key.is_empty()
+    }
+
+    /// Get the current API key
+    pub fn get_api_key(&self) -> String {
+        let config = self.config.read().unwrap();
+        config.api_key.clone()
+    }
+
+    /// Update the API key
+    pub fn update_api_key(&self, new_key: &str) -> Result<()> {
+        let mut config = self.config.write().unwrap();
+        config.api_key = new_key.to_string();
+        info!("OpenRouter API key updated");
+        Ok(())
     }
 
     /// Get available models (curated list for document editing)
@@ -222,7 +240,10 @@ impl AiManager {
             anyhow::bail!("AI features are not enabled");
         }
 
-        let url = format!("{}/chat/completions", self.config.base_url);
+        let (url, api_key) = {
+            let config = self.config.read().unwrap();
+            (format!("{}/chat/completions", config.base_url), config.api_key.clone())
+        };
         
         let request = ChatCompletionRequest {
             model: model.to_string(),
@@ -236,7 +257,7 @@ impl AiManager {
 
         let response = self.client
             .post(&url)
-            .header("Authorization", format!("Bearer {}", self.config.api_key))
+            .header("Authorization", format!("Bearer {}", api_key))
             .header("HTTP-Referer", "https://rustpad.io")
             .header("X-Title", "Rustpad")
             .json(&request)

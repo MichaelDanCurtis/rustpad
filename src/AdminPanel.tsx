@@ -28,15 +28,28 @@ import {
   AlertDialogContent,
   AlertDialogOverlay,
   useDisclosure,
+  Input,
+  InputGroup,
+  InputRightElement,
+  FormControl,
+  FormLabel,
+  Divider,
+  Collapse,
 } from "@chakra-ui/react";
 import { useState, useEffect, useRef } from "react";
-import { VscTrash, VscRefresh } from "react-icons/vsc";
+import { VscTrash, VscRefresh, VscKey, VscEye, VscEyeClosed, VscCheck } from "react-icons/vsc";
 
 type User = {
   username: string;
   created_at: string;
   ai_enabled: boolean;
   is_admin: boolean;
+};
+
+type AdminSettings = {
+  ai_enabled: boolean;
+  api_key_configured: boolean;
+  api_key_preview: string | null;
 };
 
 type AdminPanelProps = {
@@ -60,11 +73,19 @@ function AdminPanel({
   const [deleteUser, setDeleteUser] = useState<string | null>(null);
   const { isOpen: isDeleteOpen, onOpen: onDeleteOpen, onClose: onDeleteClose } = useDisclosure();
   const cancelRef = useRef<HTMLButtonElement>(null);
+  
+  // Settings state
+  const [settings, setSettings] = useState<AdminSettings | null>(null);
+  const [showSettings, setShowSettings] = useState(false);
+  const [newApiKey, setNewApiKey] = useState("");
+  const [showApiKey, setShowApiKey] = useState(false);
+  const [isSavingApiKey, setIsSavingApiKey] = useState(false);
 
-  // Load users when panel opens
+  // Load users and settings when panel opens
   useEffect(() => {
     if (isOpen) {
       loadUsers();
+      loadSettings();
     }
   }, [isOpen]);
 
@@ -97,6 +118,72 @@ function AdminPanel({
       });
     } finally {
       setIsLoading(false);
+    }
+  }
+
+  async function loadSettings() {
+    if (!username || !password) return;
+
+    try {
+      const authHeader = btoa(`${username}:${password}`);
+      const response = await fetch("/api/admin/settings", {
+        headers: {
+          Authorization: `Basic ${authHeader}`,
+        },
+      });
+
+      if (!response.ok) {
+        const error = await response.text();
+        throw new Error(error || "Failed to load settings");
+      }
+
+      const data = await response.json();
+      setSettings(data);
+    } catch (error) {
+      console.error("Failed to load settings:", error);
+    }
+  }
+
+  async function saveApiKey() {
+    if (!username || !password || !newApiKey.trim()) return;
+
+    setIsSavingApiKey(true);
+    try {
+      const authHeader = btoa(`${username}:${password}`);
+      const response = await fetch("/api/admin/settings/api-key", {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Basic ${authHeader}`,
+        },
+        body: JSON.stringify({ api_key: newApiKey }),
+      });
+
+      if (!response.ok) {
+        const error = await response.text();
+        throw new Error(error || "Failed to update API key");
+      }
+
+      toast({
+        title: "API key updated",
+        description: "OpenRouter API key has been saved successfully",
+        status: "success",
+        duration: 3000,
+        isClosable: true,
+      });
+
+      setNewApiKey("");
+      await loadSettings();
+    } catch (error) {
+      toast({
+        title: "Failed to update API key",
+        description: error instanceof Error ? error.message : "Unknown error",
+        status: "error",
+        duration: 4000,
+        isClosable: true,
+      });
+    } finally {
+      setIsSavingApiKey(false);
     }
   }
 
@@ -233,6 +320,92 @@ function AdminPanel({
           <ModalCloseButton color={darkMode ? "#cbcaca" : "inherit"} />
           
           <ModalBody p={4}>
+            {/* Settings Section */}
+            <Box mb={6}>
+              <Button
+                size="sm"
+                leftIcon={<VscKey />}
+                onClick={() => setShowSettings(!showSettings)}
+                variant="outline"
+                colorScheme="blue"
+                mb={3}
+              >
+                {showSettings ? "Hide" : "Show"} Settings
+              </Button>
+              
+              <Collapse in={showSettings}>
+                <Box
+                  p={4}
+                  borderRadius="md"
+                  borderWidth="1px"
+                  borderColor={darkMode ? "#3c3c3c" : "gray.200"}
+                  bgColor={darkMode ? "#2d3748" : "gray.50"}
+                >
+                  <VStack spacing={4} align="stretch">
+                    <Text fontWeight="bold" fontSize="md" color={darkMode ? "#cbcaca" : "inherit"}>
+                      OpenRouter Settings
+                    </Text>
+                    
+                    {settings && (
+                      <HStack spacing={4}>
+                        <Badge colorScheme={settings.ai_enabled ? "green" : "gray"}>
+                          AI {settings.ai_enabled ? "Enabled" : "Disabled"}
+                        </Badge>
+                        <Badge colorScheme={settings.api_key_configured ? "green" : "red"}>
+                          API Key {settings.api_key_configured ? "Configured" : "Not Set"}
+                        </Badge>
+                      </HStack>
+                    )}
+                    
+                    {settings?.api_key_configured && settings.api_key_preview && (
+                      <Text fontSize="sm" color={darkMode ? "#888" : "gray.600"}>
+                        Current key: {settings.api_key_preview}
+                      </Text>
+                    )}
+                    
+                    <FormControl>
+                      <FormLabel fontSize="sm" color={darkMode ? "#cbcaca" : "inherit"}>
+                        Update API Key
+                      </FormLabel>
+                      <InputGroup size="sm">
+                        <Input
+                          type={showApiKey ? "text" : "password"}
+                          placeholder="sk-or-v1-..."
+                          value={newApiKey}
+                          onChange={(e) => setNewApiKey(e.target.value)}
+                          color={darkMode ? "#cbcaca" : "inherit"}
+                          bgColor={darkMode ? "#1e1e1e" : "white"}
+                        />
+                        <InputRightElement width="4.5rem">
+                          <IconButton
+                            h="1.75rem"
+                            size="sm"
+                            onClick={() => setShowApiKey(!showApiKey)}
+                            icon={showApiKey ? <VscEyeClosed /> : <VscEye />}
+                            aria-label={showApiKey ? "Hide API key" : "Show API key"}
+                            variant="ghost"
+                          />
+                        </InputRightElement>
+                      </InputGroup>
+                    </FormControl>
+                    
+                    <Button
+                      size="sm"
+                      colorScheme="green"
+                      leftIcon={isSavingApiKey ? <Spinner size="xs" /> : <VscCheck />}
+                      onClick={saveApiKey}
+                      isDisabled={!newApiKey.trim() || isSavingApiKey}
+                      width="fit-content"
+                    >
+                      Save API Key
+                    </Button>
+                  </VStack>
+                </Box>
+              </Collapse>
+            </Box>
+
+            <Divider mb={6} borderColor={darkMode ? "#3c3c3c" : "gray.200"} />
+
             {/* Statistics */}
             <HStack spacing={4} mb={6} wrap="wrap">
               <Box
