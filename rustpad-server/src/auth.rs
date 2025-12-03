@@ -17,6 +17,9 @@ pub struct User {
     password_hash: String,
     /// Creation timestamp
     pub created_at: String,
+    /// Whether AI features are enabled for this user
+    #[serde(default)]
+    pub ai_enabled: bool,
 }
 
 /// Configuration for authentication
@@ -70,7 +73,7 @@ impl AuthManager {
     }
 
     /// Register a new user
-    pub fn register(&self, username: &str, password: &str) -> Result<User> {
+    pub fn register(&self, username: &str, password: &str, ai_enabled: bool) -> Result<User> {
         if !self.config.enabled {
             bail!("Authentication feature is not enabled");
         }
@@ -101,6 +104,7 @@ impl AuthManager {
             username: username.to_string(),
             password_hash,
             created_at: chrono::Utc::now().to_rfc3339(),
+            ai_enabled,
         };
 
         // Save user

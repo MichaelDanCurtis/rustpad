@@ -7,6 +7,7 @@ import useLocalStorageState from "use-local-storage-state";
 
 import FileBrowserModal from "./FileBrowserModal";
 import Footer from "./Footer";
+import LoginModal from "./LoginModal";
 import Sidebar from "./Sidebar";
 import animals from "./animals.json";
 import languages from "./languages.json";
@@ -48,6 +49,13 @@ function App() {
   const id = useHash();
 
   const [fileBrowserOpen, setFileBrowserOpen] = useState(false);
+  const [loginModalOpen, setLoginModalOpen] = useState(false);
+  const [username, setUsername] = useLocalStorageState<string | null>("rustpad_username", {
+    defaultValue: null,
+  });
+  const [password, setPassword] = useLocalStorageState<string | null>("rustpad_password", {
+    defaultValue: null,
+  });
 
   useEffect(() => {
     if (editor?.getModel()) {
@@ -114,17 +122,21 @@ function App() {
   }
 
   async function handleFreeze() {
+    // Check if user is logged in
+    if (!username || !password) {
+      setLoginModalOpen(true);
+      return;
+    }
+
     try {
-      // Get stored owner token or generate new one
-      let ownerToken = localStorage.getItem("rustpad_owner_token");
-      
+      const authHeader = btoa(`${username}:${password}`);
       const response = await fetch(`/api/documents/${id}/freeze`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          "Authorization": `Basic ${authHeader}`,
         },
         body: JSON.stringify({
-          owner_token: ownerToken || undefined,
           language: language !== "plaintext" ? language : undefined,
         }),
       });
@@ -135,11 +147,8 @@ function App() {
       }
 
       const result = await response.json();
-      
-      // Store the owner token
-      localStorage.setItem("rustpad_owner_token", result.owner_token);
-
       const expiryDate = new Date(result.expires_at);
+      
       toast({
         title: "Document frozen!",
         description: (
@@ -147,14 +156,6 @@ function App() {
             Saved as <Text as="span" fontWeight="semibold">{result.document_id}.{result.file_extension}</Text>.
             <br />
             Expires: {expiryDate.toLocaleDateString()}
-            {!ownerToken && (
-              <>
-                <br />
-                <Text as="span" fontSize="xs" color="yellow.300">
-                  Your owner token has been saved locally.
-                </Text>
-              </>
-            )}
           </>
         ),
         status: "success",
@@ -194,6 +195,19 @@ function App() {
       duration: 3000,
       isClosable: true,
     });
+  }
+
+  function handleLoginSuccess(user: string, pass: string) {
+    setUsername(user);
+    setPassword(pass);
+  }
+
+  function handleFilesClick() {
+    if (!username || !password) {
+      setLoginModalOpen(true);
+    } else {
+      setFileBrowserOpen(true);
+    }
   }
 
   return (
@@ -260,10 +274,19 @@ function App() {
           </Box>
         </Flex>
       </Flex>
-      <Footer onOpenFiles={() => setFileBrowserOpen(true)} />
+      <Footer onOpenFiles={handleFilesClick} />
       <FileBrowserModal
         isOpen={fileBrowserOpen}
         onClose={() => setFileBrowserOpen(false)}
+        darkMode={darkMode}
+        username={username}
+        password={password}
+        onAuthRequired={() => setLoginModalOpen(true)}
+      />
+      <LoginModal
+        isOpen={loginModalOpen}
+        onClose={() => setLoginModalOpen(false)}
+        onSuccess={handleLoginSuccess}
         darkMode={darkMode}
       />
     </Flex>

@@ -13,8 +13,9 @@ use serde::Serialize;
 use tokio::time::{self, Instant};
 use warp::{filters::BoxedFilter, ws::Ws, Filter, Rejection, Reply};
 
-use crate::{auth::AuthManager, database::Database, freeze::FreezeManager, rustpad::Rustpad};
+use crate::{ai::AiManager, auth::AuthManager, database::Database, freeze::FreezeManager, rustpad::Rustpad};
 
+pub mod ai;
 pub mod auth;
 pub mod database;
 pub mod freeze;
@@ -63,6 +64,8 @@ struct ServerState {
     freeze_manager: Option<Arc<FreezeManager>>,
     /// Authentication manager for user accounts.
     auth_manager: Option<Arc<AuthManager>>,
+    /// AI manager for OpenRouter integration.
+    ai_manager: Option<Arc<AiManager>>,
 }
 
 /// Statistics about the server, returned from an API endpoint.
@@ -87,6 +90,8 @@ pub struct ServerConfig {
     pub freeze_manager: Option<Arc<FreezeManager>>,
     /// Authentication manager for user accounts.
     pub auth_manager: Option<Arc<AuthManager>>,
+    /// AI manager for OpenRouter integration.
+    pub ai_manager: Option<Arc<AiManager>>,
 }
 
 impl Default for ServerConfig {
@@ -96,6 +101,7 @@ impl Default for ServerConfig {
             database: None,
             freeze_manager: None,
             auth_manager: None,
+            ai_manager: None,
         }
     }
 }
@@ -120,6 +126,7 @@ fn backend(config: ServerConfig) -> BoxedFilter<(impl Reply,)> {
         database: config.database,
         freeze_manager: config.freeze_manager.clone(),
         auth_manager: config.auth_manager.clone(),
+        ai_manager: config.ai_manager.clone(),
     };
     tokio::spawn(cleaner(state.clone(), config.expiry_days));
     
@@ -187,6 +194,18 @@ fn backend(config: ServerConfig) -> BoxedFilter<(impl Reply,)> {
         .and(state_filter.clone())
         .and_then(login_handler);
 
+    let ai_models = warp::path!("ai" / "models")
+        .and(warp::get())
+        .and(state_filter.clone())
+        .and_then(ai_models_handler);
+
+    let ai_chat = warp::path!("ai" / "chat")
+        .and(warp::post())
+        .and(warp::body::json())
+        .and(warp::header::optional("Authorization"))
+        .and(state_filter.clone())
+        .and_then(ai_chat_handler);
+
     socket
         .or(text)
         .or(stats)
@@ -196,6 +215,8 @@ fn backend(config: ServerConfig) -> BoxedFilter<(impl Reply,)> {
         .or(delete_frozen)
         .or(register)
         .or(login)
+        .or(ai_models)
+        .or(ai_chat)
         .boxed()
 }
 
@@ -309,6 +330,8 @@ struct FreezeRequest {
 struct AuthRequest {
     username: String,
     password: String,
+    #[serde(default)]
+    ai_enabled: bool,
 }
 
 /// Response for authentication
@@ -316,6 +339,7 @@ struct AuthRequest {
 struct AuthResponse {
     username: String,
     created_at: String,
+    ai_enabled: bool,
 }
 
 /// Response for freezing a document
@@ -516,12 +540,13 @@ async fn register_handler(
         .ok_or_else(|| warp::reject::custom(CustomReject(anyhow::anyhow!("Auth not enabled"))))?;
 
     let user = auth_manager
-        .register(&req.username, &req.password)
+        .register(&req.username, &req.password, req.ai_enabled)
         .map_err(|e| warp::reject::custom(CustomReject(e)))?;
 
     Ok(warp::reply::json(&AuthResponse {
         username: user.username,
         created_at: user.created_at,
+        ai_enabled: user.ai_enabled,
     }))
 }
 
@@ -542,6 +567,7 @@ async fn login_handler(
     Ok(warp::reply::json(&AuthResponse {
         username: user.username,
         created_at: user.created_at,
+        ai_enabled: user.ai_enabled,
     }))
 }
 
@@ -555,4 +581,70 @@ async fn freeze_cleaner(freeze_manager: Arc<FreezeManager>) {
             _ => {}
         }
     }
+}
+
+/// Request body for AI chat
+#[derive(serde::Deserialize)]
+struct AiChatRequest {
+    model: String,
+    messages: Vec<ai::ChatMessage>,
+    #[serde(default)]
+    max_tokens: Option<u32>,
+    #[serde(default)]
+    temperature: Option<f32>,
+}
+
+/// Handler for GET /api/ai/models
+async fn ai_models_handler(state: ServerState) -> Result<impl Reply, Rejection> {
+    let ai_manager = state
+        .ai_manager
+        .as_ref()
+        .ok_or_else(|| warp::reject::custom(CustomReject(anyhow::anyhow!("AI features not enabled"))))?;
+
+    if !ai_manager.is_enabled() {
+        return Err(warp::reject::custom(CustomReject(anyhow::anyhow!(
+            "AI features not configured"
+        ))));
+    }
+
+    let models = ai_manager.get_available_models();
+    Ok(warp::reply::json(&models))
+}
+
+/// Handler for POST /api/ai/chat
+async fn ai_chat_handler(
+    req: AiChatRequest,
+    auth: Option<String>,
+    state: ServerState,
+) -> Result<impl Reply, Rejection> {
+    let ai_manager = state
+        .ai_manager
+        .as_ref()
+        .ok_or_else(|| warp::reject::custom(CustomReject(anyhow::anyhow!("AI features not enabled"))))?;
+
+    let auth_manager = state
+        .auth_manager
+        .as_ref()
+        .ok_or_else(|| warp::reject::custom(CustomReject(anyhow::anyhow!("Auth not enabled"))))?;
+
+    // Extract and validate credentials
+    let (username, password) = extract_basic_auth(auth)?;
+    let user = auth_manager
+        .login(&username, &password)
+        .map_err(|e| warp::reject::custom(CustomReject(e)))?;
+
+    // Check if user has AI access
+    if !user.ai_enabled {
+        return Err(warp::reject::custom(CustomReject(anyhow::anyhow!(
+            "AI features not enabled for this user"
+        ))));
+    }
+
+    // Make the API call
+    let response = ai_manager
+        .chat_completion(&req.model, req.messages, req.max_tokens, req.temperature)
+        .await
+        .map_err(|e| warp::reject::custom(CustomReject(e)))?;
+
+    Ok(warp::reply::json(&response))
 }

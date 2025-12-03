@@ -42,79 +42,65 @@ type FileBrowserModalProps = {
   isOpen: boolean;
   onClose: () => void;
   darkMode: boolean;
+  username: string | null;
+  password: string | null;
+  onAuthRequired: () => void;
 };
 
 function FileBrowserModal({
   isOpen,
   onClose,
   darkMode,
+  username,
+  password,
+  onAuthRequired,
 }: FileBrowserModalProps) {
   const toast = useToast();
-  const [ownerToken, setOwnerToken] = useState("");
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [documents, setDocuments] = useState<FrozenDocument[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [documentToDelete, setDocumentToDelete] = useState<string | null>(null);
   const { isOpen: isDeleteOpen, onOpen: onDeleteOpen, onClose: onDeleteClose } = useDisclosure();
   const cancelRef = useRef<HTMLButtonElement>(null);
 
-  // Check for stored token on mount
+  // Load documents when modal opens and user is authenticated
   useEffect(() => {
-    const storedToken = localStorage.getItem("rustpad_owner_token");
-    if (storedToken) {
-      setOwnerToken(storedToken);
-      handleAuthenticate(storedToken);
+    if (isOpen && username && password) {
+      loadDocuments();
+    } else if (isOpen && (!username || !password)) {
+      onAuthRequired();
+      onClose();
     }
-  }, []);
+  }, [isOpen, username, password]);
 
-  async function handleAuthenticate(token?: string) {
-    const tokenToUse = token || ownerToken;
-    if (!tokenToUse) return;
+  async function loadDocuments() {
+    if (!username || !password) return;
 
     setIsLoading(true);
     try {
+      const authHeader = btoa(`${username}:${password}`);
       const response = await fetch("/api/documents/list", {
         headers: {
-          Authorization: `Bearer ${tokenToUse}`,
+          Authorization: `Basic ${authHeader}`,
         },
       });
 
       if (!response.ok) {
-        throw new Error("Invalid token or server error");
+        throw new Error("Failed to load documents");
       }
 
       const docs: FrozenDocument[] = await response.json();
       setDocuments(docs);
-      setIsAuthenticated(true);
-      localStorage.setItem("rustpad_owner_token", tokenToUse);
-      
-      toast({
-        title: "Authenticated",
-        description: `Found ${docs.length} frozen document${docs.length !== 1 ? "s" : ""}`,
-        status: "success",
-        duration: 2000,
-        isClosable: true,
-      });
     } catch (error) {
       toast({
-        title: "Authentication failed",
-        description: "Invalid owner token",
+        title: "Failed to load documents",
+        description: error instanceof Error ? error.message : "Unknown error",
         status: "error",
         duration: 3000,
         isClosable: true,
       });
-      setIsAuthenticated(false);
-      localStorage.removeItem("rustpad_owner_token");
     } finally {
       setIsLoading(false);
     }
-  }
-
-  function handleLogout() {
-    setIsAuthenticated(false);
-    setDocuments([]);
-    setOwnerToken("");
-    localStorage.removeItem("rustpad_owner_token");
   }
 
   function handleOpenDocument(docId: string) {
@@ -151,13 +137,14 @@ function FileBrowserModal({
   }
 
   async function handleConfirmDelete() {
-    if (!documentToDelete) return;
+    if (!documentToDelete || !username || !password) return;
 
     try {
+      const authHeader = btoa(`${username}:${password}`);
       const response = await fetch(`/api/documents/${documentToDelete}/delete`, {
         method: "DELETE",
         headers: {
-          Authorization: `Bearer ${ownerToken}`,
+          Authorization: `Basic ${authHeader}`,
         },
       });
 
@@ -198,48 +185,20 @@ function FileBrowserModal({
         </ModalHeader>
         <ModalCloseButton color={darkMode ? "#cbcaca" : "inherit"} />
         <ModalBody>
-          {!isAuthenticated ? (
-            <VStack spacing={4}>
-              <Text fontSize="sm" color={darkMode ? "#cbcaca" : "inherit"}>
-                Enter your owner token to access your frozen documents. This
-                token was generated when you first froze a document.
+          <VStack spacing={3} align="stretch">
+            <HStack justifyContent="space-between">
+              <Text fontSize="sm" color={darkMode ? "#888" : "gray.600"}>
+                {documents.length} document{documents.length !== 1 ? "s" : ""}{" "}
+                found
               </Text>
-              <Input
-                placeholder="Owner Token (UUID)"
-                value={ownerToken}
-                onChange={(e) => setOwnerToken(e.target.value)}
-                bgColor={darkMode ? "#3c3c3c" : "white"}
-                borderColor={darkMode ? "#3c3c3c" : "gray.200"}
-                color={darkMode ? "#cbcaca" : "inherit"}
-                onKeyPress={(e) => {
-                  if (e.key === "Enter") handleAuthenticate();
-                }}
-              />
-              <Button
-                colorScheme="blue"
-                onClick={() => handleAuthenticate()}
-                isLoading={isLoading}
-                isDisabled={!ownerToken}
-                w="full"
-              >
-                Authenticate
-              </Button>
-            </VStack>
-          ) : (
-            <VStack spacing={3} align="stretch">
-              <HStack justifyContent="space-between">
-                <Text fontSize="sm" color={darkMode ? "#888" : "gray.600"}>
-                  {documents.length} document{documents.length !== 1 ? "s" : ""}{" "}
-                  found
-                </Text>
-                <Button size="xs" variant="ghost" onClick={handleLogout}>
-                  Logout
-                </Button>
-              </HStack>
+              <Text fontSize="xs" color={darkMode ? "#888" : "gray.600"}>
+                {username}
+              </Text>
+            </HStack>
 
-              <Divider />
+            <Divider />
 
-              {isLoading ? (
+            {isLoading ? (
                 <Box textAlign="center" py={8}>
                   <Spinner color={darkMode ? "#cbcaca" : "inherit"} />
                 </Box>
@@ -318,10 +277,9 @@ function FileBrowserModal({
                       </HStack>
                     </Box>
                   );
-                })
-              )}
-            </VStack>
-          )}
+              })
+            )}
+          </VStack>
         </ModalBody>
 
         <ModalFooter>

@@ -1,4 +1,4 @@
-use rustpad_server::{server, auth::{AuthConfig, AuthManager}, database::Database, freeze::{FreezeConfig, FreezeManager}, ServerConfig};
+use rustpad_server::{ai::{AiConfig, AiManager}, auth::{AuthConfig, AuthManager}, database::Database, freeze::{FreezeConfig, FreezeManager}, server, ServerConfig};
 
 #[tokio::main]
 async fn main() {
@@ -30,6 +30,16 @@ async fn main() {
         None
     };
 
+    let ai_config = AiConfig::from_env();
+    let ai_manager = if ai_config.enabled {
+        Some(std::sync::Arc::new(
+            AiManager::new(ai_config)
+                .expect("Unable to initialize AiManager"),
+        ))
+    } else {
+        None
+    };
+
     let config = ServerConfig {
         expiry_days: std::env::var("EXPIRY_DAYS")
             .unwrap_or_else(|_| String::from("1"))
@@ -45,6 +55,7 @@ async fn main() {
         },
         freeze_manager,
         auth_manager,
+        ai_manager,
     };
 
     warp::serve(server(config)).run(([0, 0, 0, 0], port)).await;
