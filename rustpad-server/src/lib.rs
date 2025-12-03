@@ -160,12 +160,20 @@ fn backend(config: ServerConfig) -> BoxedFilter<(impl Reply,)> {
         .and(state_filter.clone())
         .and_then(list_frozen_handler);
 
+    let delete_frozen = warp::path("documents")
+        .and(warp::path!(String / "delete"))
+        .and(warp::delete())
+        .and(warp::header::optional("Authorization"))
+        .and(state_filter.clone())
+        .and_then(delete_frozen_handler);
+
     socket
         .or(text)
         .or(stats)
         .or(freeze)
         .or(download)
         .or(list_frozen)
+        .or(delete_frozen)
         .boxed()
 }
 
@@ -386,6 +394,34 @@ async fn list_frozen_handler(
         .map_err(|e| warp::reject::custom(CustomReject(e)))?;
 
     Ok(warp::reply::json(&documents))
+}
+
+/// Handler for DELETE /api/documents/{id}/delete
+async fn delete_frozen_handler(
+    id: String,
+    auth: Option<String>,
+    state: ServerState,
+) -> Result<impl Reply, Rejection> {
+    let freeze_manager = state
+        .freeze_manager
+        .as_ref()
+        .ok_or_else(|| warp::reject::custom(CustomReject(anyhow::anyhow!("Freeze feature not enabled"))))?;
+
+    // Extract token from Authorization header
+    let owner_token = auth
+        .and_then(|h| h.strip_prefix("Bearer ").map(String::from))
+        .ok_or_else(|| {
+            warp::reject::custom(CustomReject(anyhow::anyhow!("Missing or invalid Authorization header")))
+        })?;
+
+    freeze_manager
+        .delete_frozen_document(&owner_token, &id)
+        .map_err(|e| warp::reject::custom(CustomReject(e)))?;
+
+    Ok(warp::reply::with_status(
+        "Document deleted",
+        warp::http::StatusCode::OK,
+    ))
 }
 
 /// Cleanup task for expired frozen documents

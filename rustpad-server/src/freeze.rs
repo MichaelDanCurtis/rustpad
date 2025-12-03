@@ -251,6 +251,64 @@ impl FreezeManager {
         Ok(content)
     }
 
+    /// Delete a frozen document
+    pub fn delete_frozen_document(&self, owner_token: &str, document_id: &str) -> Result<()> {
+        if !self.config.enabled {
+            bail!("File freeze feature is not enabled");
+        }
+
+        let owner_dir = self.config.save_dir.join("frozen").join(owner_token);
+        let metadata_file = owner_dir.join("metadata.json");
+
+        if !metadata_file.exists() {
+            bail!("No frozen documents found for this owner");
+        }
+
+        // Load existing metadata
+        let content = fs::read_to_string(&metadata_file)
+            .context("Failed to read metadata file")?;
+        let mut documents: Vec<FrozenDocument> = serde_json::from_str(&content)
+            .context("Failed to parse metadata")?;
+
+        // Find and remove the document
+        let doc_index = documents
+            .iter()
+            .position(|d| d.document_id == document_id)
+            .context("Document not found")?;
+
+        let doc = documents.remove(doc_index);
+
+        // Delete the file
+        if doc.file_path.exists() {
+            fs::remove_file(&doc.file_path)
+                .context("Failed to delete document file")?;
+        }
+
+        // Update metadata
+        if documents.is_empty() {
+            // Remove entire owner directory if no documents left
+            fs::remove_dir_all(&owner_dir)
+                .context("Failed to remove owner directory")?;
+        } else {
+            // Save updated metadata
+            let metadata_json = serde_json::to_string_pretty(&documents)?;
+            fs::write(&metadata_file, metadata_json)
+                .context("Failed to save metadata")?;
+        }
+
+        // Update cache
+        let mut cache = self.metadata_cache.write();
+        if documents.is_empty() {
+            cache.remove(owner_token);
+        } else {
+            cache.insert(owner_token.to_string(), documents);
+        }
+
+        info!("Deleted frozen document: id={}, owner_token={}", document_id, owner_token);
+
+        Ok(())
+    }
+
     /// Save metadata to disk
     fn save_metadata(&self, frozen_doc: &FrozenDocument) -> Result<()> {
         let owner_dir = self

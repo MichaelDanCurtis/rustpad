@@ -16,9 +16,17 @@ import {
   useToast,
   Spinner,
   Badge,
+  IconButton,
+  useDisclosure,
+  AlertDialog,
+  AlertDialogBody,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogContent,
+  AlertDialogOverlay,
 } from "@chakra-ui/react";
-import { useState, useEffect } from "react";
-import { VscFile, VscHistory } from "react-icons/vsc";
+import { useState, useEffect, useRef } from "react";
+import { VscFile, VscHistory, VscTrash } from "react-icons/vsc";
 
 type FrozenDocument = {
   document_id: string;
@@ -46,6 +54,9 @@ function FileBrowserModal({
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [documents, setDocuments] = useState<FrozenDocument[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [documentToDelete, setDocumentToDelete] = useState<string | null>(null);
+  const { isOpen: isDeleteOpen, onOpen: onDeleteOpen, onClose: onDeleteClose } = useDisclosure();
+  const cancelRef = useRef<HTMLButtonElement>(null);
 
   // Check for stored token on mount
   useEffect(() => {
@@ -133,6 +144,51 @@ function FileBrowserModal({
     return diffDays;
   }
 
+  function handleDeleteClick(docId: string, event: React.MouseEvent) {
+    event.stopPropagation(); // Prevent opening the document
+    setDocumentToDelete(docId);
+    onDeleteOpen();
+  }
+
+  async function handleConfirmDelete() {
+    if (!documentToDelete) return;
+
+    try {
+      const response = await fetch(`/api/documents/${documentToDelete}/delete`, {
+        method: "DELETE",
+        headers: {
+          Authorization: `Bearer ${ownerToken}`,
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to delete document");
+      }
+
+      // Remove from local state
+      setDocuments(documents.filter(d => d.document_id !== documentToDelete));
+
+      toast({
+        title: "Document deleted",
+        description: "The frozen document has been removed",
+        status: "success",
+        duration: 3000,
+        isClosable: true,
+      });
+    } catch (error) {
+      toast({
+        title: "Delete failed",
+        description: error instanceof Error ? error.message : "Unknown error",
+        status: "error",
+        duration: 4000,
+        isClosable: true,
+      });
+    } finally {
+      onDeleteClose();
+      setDocumentToDelete(null);
+    }
+  }
+
   return (
     <Modal isOpen={isOpen} onClose={onClose} size="xl">
       <ModalOverlay />
@@ -213,7 +269,7 @@ function FileBrowserModal({
                       onClick={() => handleOpenDocument(doc.document_id)}
                     >
                       <HStack justifyContent="space-between" mb={2}>
-                        <HStack>
+                        <HStack flex={1}>
                           <VscFile />
                           <Text
                             fontWeight="semibold"
@@ -223,18 +279,28 @@ function FileBrowserModal({
                             {doc.document_id}.{doc.file_extension}
                           </Text>
                         </HStack>
-                        <Badge
-                          colorScheme={
-                            daysLeft <= 3
-                              ? "red"
-                              : daysLeft <= 7
-                                ? "yellow"
-                                : "green"
-                          }
-                          fontSize="xs"
-                        >
-                          {daysLeft}d left
-                        </Badge>
+                        <HStack spacing={2}>
+                          <Badge
+                            colorScheme={
+                              daysLeft <= 3
+                                ? "red"
+                                : daysLeft <= 7
+                                  ? "yellow"
+                                  : "green"
+                            }
+                            fontSize="xs"
+                          >
+                            {daysLeft}d left
+                          </Badge>
+                          <IconButton
+                            aria-label="Delete document"
+                            icon={<VscTrash />}
+                            size="xs"
+                            colorScheme="red"
+                            variant="ghost"
+                            onClick={(e) => handleDeleteClick(doc.document_id, e)}
+                          />
+                        </HStack>
                       </HStack>
                       <HStack
                         spacing={4}
@@ -264,6 +330,38 @@ function FileBrowserModal({
           </Button>
         </ModalFooter>
       </ModalContent>
+
+      <AlertDialog
+        isOpen={isDeleteOpen}
+        leastDestructiveRef={cancelRef}
+        onClose={onDeleteClose}
+      >
+        <AlertDialogOverlay>
+          <AlertDialogContent bgColor={darkMode ? "#1e1e1e" : "white"}>
+            <AlertDialogHeader
+              fontSize="lg"
+              fontWeight="bold"
+              color={darkMode ? "#cbcaca" : "inherit"}
+            >
+              Delete Document
+            </AlertDialogHeader>
+
+            <AlertDialogBody color={darkMode ? "#cbcaca" : "inherit"}>
+              Are you sure you want to delete this frozen document? This action
+              cannot be undone.
+            </AlertDialogBody>
+
+            <AlertDialogFooter>
+              <Button ref={cancelRef} onClick={onDeleteClose}>
+                Cancel
+              </Button>
+              <Button colorScheme="red" onClick={handleConfirmDelete} ml={3}>
+                Delete
+              </Button>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialogOverlay>
+      </AlertDialog>
     </Modal>
   );
 }
