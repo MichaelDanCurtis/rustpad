@@ -176,8 +176,9 @@ impl AiManager {
     /// Update the API key
     pub fn update_api_key(&self, new_key: &str) -> Result<()> {
         let mut config = self.config.write().unwrap();
-        config.api_key = new_key.to_string();
-        info!("OpenRouter API key updated");
+        let trimmed_key = new_key.trim().to_string();
+        config.api_key = trimmed_key.clone();
+        info!("OpenRouter API key updated (length: {})", trimmed_key.len());
         Ok(())
     }
 
@@ -263,6 +264,7 @@ impl AiManager {
         };
 
         info!("Sending chat completion request to OpenRouter with model: {}", model);
+        info!("API key length: {}, starts with: {}", api_key.len(), &api_key[..15.min(api_key.len())]);
 
         let response = self.client
             .post(&url)
