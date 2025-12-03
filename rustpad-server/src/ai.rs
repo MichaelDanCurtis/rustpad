@@ -119,6 +119,30 @@ pub struct ModelInfo {
     pub pricing: ModelPricing,
 }
 
+/// OpenRouter API model response
+#[derive(Debug, Deserialize)]
+struct OpenRouterModel {
+    id: String,
+    name: String,
+    #[serde(default)]
+    description: Option<String>,
+    context_length: u32,
+    pricing: OpenRouterPricing,
+}
+
+/// OpenRouter API pricing structure
+#[derive(Debug, Deserialize)]
+struct OpenRouterPricing {
+    prompt: String,
+    completion: String,
+}
+
+/// OpenRouter models list response
+#[derive(Debug, Deserialize)]
+struct OpenRouterModelsResponse {
+    data: Vec<OpenRouterModel>,
+}
+
 /// Pricing information for a model
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelPricing {
@@ -182,9 +206,20 @@ impl AiManager {
         Ok(())
     }
 
-    /// Get available models (curated list for document editing)
+    /// Get available models (returns fallback list synchronously)
+    /// For full dynamic list, use get_available_models_async()
     pub fn get_available_models(&self) -> Vec<ModelInfo> {
         vec![
+            ModelInfo {
+                id: "openrouter/auto".to_string(),
+                name: "Auto Router (Recommended)".to_string(),
+                description: "Automatically routes to the best model for your task".to_string(),
+                context_length: 2000000,
+                pricing: ModelPricing {
+                    prompt: "Varies by model".to_string(),
+                    completion: "Varies by model".to_string(),
+                },
+            },
             ModelInfo {
                 id: "anthropic/claude-3.5-sonnet".to_string(),
                 name: "Claude 3.5 Sonnet".to_string(),
@@ -236,6 +271,67 @@ impl AiManager {
                 },
             },
         ]
+    }
+
+    /// Fetch all available models from OpenRouter API
+    pub async fn get_available_models_async(&self) -> Result<Vec<ModelInfo>> {
+        let (url, api_key) = {
+            let config = self.config.read().unwrap();
+            (format!("{}/models", config.base_url), config.api_key.clone())
+        };
+
+        info!("Fetching available models from OpenRouter API");
+
+        let response = self.client
+            .get(&url)
+            .header("Authorization", format!("Bearer {}", api_key))
+            .send()
+            .await
+            .context("Failed to fetch models from OpenRouter")?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+            log::warn!("Failed to fetch models from OpenRouter ({}): {}", status, error_text);
+            // Return fallback list if API call fails
+            return Ok(self.get_available_models());
+        }
+
+        let models_response = response
+            .json::<OpenRouterModelsResponse>()
+            .await
+            .context("Failed to parse OpenRouter models response")?;
+
+        let mut models: Vec<ModelInfo> = models_response.data
+            .into_iter()
+            .map(|m| ModelInfo {
+                id: m.id,
+                name: m.name,
+                description: m.description.unwrap_or_else(|| "No description available".to_string()),
+                context_length: m.context_length,
+                pricing: ModelPricing {
+                    prompt: m.pricing.prompt,
+                    completion: m.pricing.completion,
+                },
+            })
+            .collect();
+
+        // Add auto router at the beginning if not already present
+        if !models.iter().any(|m| m.id == "auto") {
+            models.insert(0, ModelInfo {
+                id: "auto".to_string(),
+                name: "Auto (Best)".to_string(),
+                description: "Automatically selects the best model for your request".to_string(),
+                context_length: 200000,
+                pricing: ModelPricing {
+                    prompt: "Variable".to_string(),
+                    completion: "Variable".to_string(),
+                },
+            });
+        }
+
+        info!("Successfully fetched {} models from OpenRouter", models.len());
+        Ok(models)
     }
 
     /// Send a chat completion request
