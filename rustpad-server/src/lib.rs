@@ -13,9 +13,10 @@ use serde::Serialize;
 use tokio::time::{self, Instant};
 use warp::{filters::BoxedFilter, ws::Ws, Filter, Rejection, Reply};
 
-use crate::{ai::AiManager, auth::AuthManager, database::Database, freeze::FreezeManager, rustpad::Rustpad};
+use crate::{ai::AiManager, artifacts::ArtifactManager, auth::AuthManager, database::Database, freeze::FreezeManager, rustpad::Rustpad};
 
 pub mod ai;
+pub mod artifacts;
 pub mod auth;
 pub mod database;
 pub mod freeze;
@@ -66,6 +67,8 @@ struct ServerState {
     auth_manager: Option<Arc<AuthManager>>,
     /// AI manager for OpenRouter integration.
     ai_manager: Option<Arc<AiManager>>,
+    /// Artifact manager for multi-file AI outputs.
+    artifact_manager: Option<Arc<ArtifactManager>>,
 }
 
 /// Statistics about the server, returned from an API endpoint.
@@ -92,6 +95,8 @@ pub struct ServerConfig {
     pub auth_manager: Option<Arc<AuthManager>>,
     /// AI manager for OpenRouter integration.
     pub ai_manager: Option<Arc<AiManager>>,
+    /// Artifact manager for multi-file AI outputs.
+    pub artifact_manager: Option<Arc<ArtifactManager>>,
 }
 
 impl Default for ServerConfig {
@@ -102,6 +107,7 @@ impl Default for ServerConfig {
             freeze_manager: None,
             auth_manager: None,
             ai_manager: None,
+            artifact_manager: None,
         }
     }
 }
@@ -127,6 +133,7 @@ fn backend(config: ServerConfig) -> BoxedFilter<(impl Reply,)> {
         freeze_manager: config.freeze_manager.clone(),
         auth_manager: config.auth_manager.clone(),
         ai_manager: config.ai_manager.clone(),
+        artifact_manager: config.artifact_manager.clone(),
     };
     tokio::spawn(cleaner(state.clone(), config.expiry_days));
     
@@ -206,6 +213,31 @@ fn backend(config: ServerConfig) -> BoxedFilter<(impl Reply,)> {
         .and(state_filter.clone())
         .and_then(ai_chat_handler);
 
+    let artifacts_list = warp::path!("artifacts" / "list")
+        .and(warp::get())
+        .and(warp::header::optional("Authorization"))
+        .and(state_filter.clone())
+        .and_then(artifacts_list_handler);
+
+    let artifacts_get = warp::path!("artifacts" / String)
+        .and(warp::get())
+        .and(warp::header::optional("Authorization"))
+        .and(state_filter.clone())
+        .and_then(artifacts_get_handler);
+
+    let artifacts_store = warp::path!("artifacts" / "store")
+        .and(warp::post())
+        .and(warp::body::json())
+        .and(warp::header::optional("Authorization"))
+        .and(state_filter.clone())
+        .and_then(artifacts_store_handler);
+
+    let artifacts_delete = warp::path!("artifacts" / String)
+        .and(warp::delete())
+        .and(warp::header::optional("Authorization"))
+        .and(state_filter.clone())
+        .and_then(artifacts_delete_handler);
+
     socket
         .or(text)
         .or(stats)
@@ -217,6 +249,10 @@ fn backend(config: ServerConfig) -> BoxedFilter<(impl Reply,)> {
         .or(login)
         .or(ai_models)
         .or(ai_chat)
+        .or(artifacts_list)
+        .or(artifacts_get)
+        .or(artifacts_store)
+        .or(artifacts_delete)
         .boxed()
 }
 
@@ -647,4 +683,131 @@ async fn ai_chat_handler(
         .map_err(|e| warp::reject::custom(CustomReject(e)))?;
 
     Ok(warp::reply::json(&response))
+}
+
+/// Request body for storing artifacts
+#[derive(serde::Deserialize)]
+struct ArtifactStoreRequest {
+    document_id: String,
+    model: String,
+    prompt: String,
+    files: Vec<artifacts::ArtifactFile>,
+}
+
+/// Handler for GET /api/artifacts/list
+async fn artifacts_list_handler(
+    auth: Option<String>,
+    state: ServerState,
+) -> Result<impl Reply, Rejection> {
+    let artifact_manager = state
+        .artifact_manager
+        .as_ref()
+        .ok_or_else(|| warp::reject::custom(CustomReject(anyhow::anyhow!("Artifact storage not enabled"))))?;
+
+    let auth_manager = state
+        .auth_manager
+        .as_ref()
+        .ok_or_else(|| warp::reject::custom(CustomReject(anyhow::anyhow!("Auth not enabled"))))?;
+
+    // Extract and validate credentials
+    let (username, password) = extract_basic_auth(auth)?;
+    auth_manager
+        .login(&username, &password)
+        .map_err(|e| warp::reject::custom(CustomReject(e)))?;
+
+    let artifacts = artifact_manager
+        .list_artifacts(&username)
+        .map_err(|e| warp::reject::custom(CustomReject(e)))?;
+
+    Ok(warp::reply::json(&artifacts))
+}
+
+/// Handler for GET /api/artifacts/{id}
+async fn artifacts_get_handler(
+    artifact_id: String,
+    auth: Option<String>,
+    state: ServerState,
+) -> Result<impl Reply, Rejection> {
+    let artifact_manager = state
+        .artifact_manager
+        .as_ref()
+        .ok_or_else(|| warp::reject::custom(CustomReject(anyhow::anyhow!("Artifact storage not enabled"))))?;
+
+    let auth_manager = state
+        .auth_manager
+        .as_ref()
+        .ok_or_else(|| warp::reject::custom(CustomReject(anyhow::anyhow!("Auth not enabled"))))?;
+
+    // Extract and validate credentials
+    let (username, password) = extract_basic_auth(auth)?;
+    auth_manager
+        .login(&username, &password)
+        .map_err(|e| warp::reject::custom(CustomReject(e)))?;
+
+    let artifact = artifact_manager
+        .get_artifact(&username, &artifact_id)
+        .map_err(|e| warp::reject::custom(CustomReject(e)))?;
+
+    Ok(warp::reply::json(&artifact))
+}
+
+/// Handler for POST /api/artifacts/store
+async fn artifacts_store_handler(
+    req: ArtifactStoreRequest,
+    auth: Option<String>,
+    state: ServerState,
+) -> Result<impl Reply, Rejection> {
+    let artifact_manager = state
+        .artifact_manager
+        .as_ref()
+        .ok_or_else(|| warp::reject::custom(CustomReject(anyhow::anyhow!("Artifact storage not enabled"))))?;
+
+    let auth_manager = state
+        .auth_manager
+        .as_ref()
+        .ok_or_else(|| warp::reject::custom(CustomReject(anyhow::anyhow!("Auth not enabled"))))?;
+
+    // Extract and validate credentials
+    let (username, password) = extract_basic_auth(auth)?;
+    auth_manager
+        .login(&username, &password)
+        .map_err(|e| warp::reject::custom(CustomReject(e)))?;
+
+    let metadata = artifact_manager
+        .store_artifact(&username, &req.document_id, &req.model, &req.prompt, req.files)
+        .map_err(|e| warp::reject::custom(CustomReject(e)))?;
+
+    Ok(warp::reply::json(&metadata))
+}
+
+/// Handler for DELETE /api/artifacts/{id}
+async fn artifacts_delete_handler(
+    artifact_id: String,
+    auth: Option<String>,
+    state: ServerState,
+) -> Result<impl Reply, Rejection> {
+    let artifact_manager = state
+        .artifact_manager
+        .as_ref()
+        .ok_or_else(|| warp::reject::custom(CustomReject(anyhow::anyhow!("Artifact storage not enabled"))))?;
+
+    let auth_manager = state
+        .auth_manager
+        .as_ref()
+        .ok_or_else(|| warp::reject::custom(CustomReject(anyhow::anyhow!("Auth not enabled"))))?;
+
+    // Extract and validate credentials
+    let (username, password) = extract_basic_auth(auth)?;
+    auth_manager
+        .login(&username, &password)
+        .map_err(|e| warp::reject::custom(CustomReject(e)))?;
+
+    artifact_manager
+        .delete_artifact(&username, &artifact_id)
+        .map_err(|e| warp::reject::custom(CustomReject(e)))?;
+
+    Ok(warp::reply::with_status(
+        "Artifact deleted",
+        warp::http::StatusCode::OK,
+    ))
 }

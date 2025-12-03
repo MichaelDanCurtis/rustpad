@@ -1,4 +1,4 @@
-use rustpad_server::{ai::{AiConfig, AiManager}, auth::{AuthConfig, AuthManager}, database::Database, freeze::{FreezeConfig, FreezeManager}, server, ServerConfig};
+use rustpad_server::{ai::{AiConfig, AiManager}, artifacts::{ArtifactConfig, ArtifactManager}, auth::{AuthConfig, AuthManager}, database::Database, freeze::{FreezeConfig, FreezeManager}, server, ServerConfig};
 
 #[tokio::main]
 async fn main() {
@@ -40,6 +40,16 @@ async fn main() {
         None
     };
 
+    let artifact_config = ArtifactConfig::from_env();
+    let artifact_manager = if artifact_config.enabled {
+        Some(std::sync::Arc::new(
+            ArtifactManager::new(artifact_config)
+                .expect("Unable to initialize ArtifactManager"),
+        ))
+    } else {
+        None
+    };
+
     let config = ServerConfig {
         expiry_days: std::env::var("EXPIRY_DAYS")
             .unwrap_or_else(|_| String::from("1"))
@@ -56,6 +66,7 @@ async fn main() {
         freeze_manager,
         auth_manager,
         ai_manager,
+        artifact_manager,
     };
 
     warp::serve(server(config)).run(([0, 0, 0, 0], port)).await;

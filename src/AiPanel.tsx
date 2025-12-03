@@ -114,7 +114,18 @@ function AiPanel({
       // Add document context as system message for first message only
       messagesToSend.unshift({
         role: "system",
-        content: `You are an AI assistant helping with document editing. The current document content is:\n\n${documentContent}\n\nWhen suggesting edits, provide the complete updated content that should replace the entire document.`,
+        content: `You are a code editing assistant. The current document contains:
+
+${documentContent}
+
+IMPORTANT INSTRUCTIONS:
+- When the user asks for edits or changes, output ONLY the complete, updated document content
+- Do NOT include markdown code blocks (\`\`\`) unless the document itself contains them
+- Do NOT add explanations, comments, or descriptions before or after the code
+- Do NOT say "here is the updated code" or similar phrases
+- Your response should be ready to directly replace the entire document
+- If generating new content, output only the raw content without any formatting
+- For multi-file outputs, separate each file clearly with a comment indicating the filename`,
       });
     }
 
@@ -182,12 +193,26 @@ function AiPanel({
   }
 
   function extractCodeFromMessage(content: string): string {
-    // Extract code from markdown code blocks
+    // Try to extract code from markdown code blocks
     const codeBlockMatch = content.match(/```[\w]*\n([\s\S]*?)```/);
     if (codeBlockMatch) {
       return codeBlockMatch[1].trim();
     }
-    return content;
+    
+    // If no code block found, try to remove common AI preambles
+    let cleaned = content;
+    const preambles = [
+      /^here is the (updated|modified|corrected|revised).*?:\s*/i,
+      /^here's the (updated|modified|corrected|revised).*?:\s*/i,
+      /^(updated|modified|corrected|revised) (code|content|document):\s*/i,
+      /^sure[,!]?\s+(here is|here's).*?:\s*/i,
+    ];
+    
+    for (const pattern of preambles) {
+      cleaned = cleaned.replace(pattern, '');
+    }
+    
+    return cleaned.trim();
   }
 
   function handleApplyLastEdit() {
