@@ -54,7 +54,9 @@ impl AiConfig {
 /// Message in a chat conversation
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatMessage {
+    /// Role of the message sender (user, assistant, system)
     pub role: String,
+    /// Content of the message
     pub content: String,
 }
 
@@ -73,37 +75,55 @@ struct ChatCompletionRequest {
 /// Response from OpenRouter chat completion API
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ChatCompletionResponse {
+    /// Unique identifier for the completion
     pub id: String,
+    /// List of completion choices
     pub choices: Vec<ChatChoice>,
+    /// Token usage information
     pub usage: Option<Usage>,
 }
 
+/// A single completion choice from the API
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ChatChoice {
+    /// The generated message
     pub message: ChatMessage,
+    /// Reason why the completion finished
     pub finish_reason: Option<String>,
 }
 
+/// Token usage statistics
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Usage {
+    /// Number of tokens in the prompt
     pub prompt_tokens: u32,
+    /// Number of tokens in the completion
     pub completion_tokens: u32,
+    /// Total tokens used
     pub total_tokens: u32,
 }
 
 /// Available AI model information
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelInfo {
+    /// Model identifier
     pub id: String,
+    /// Human-readable model name
     pub name: String,
+    /// Model description
     pub description: String,
+    /// Maximum context window size
     pub context_length: u32,
+    /// Pricing information
     pub pricing: ModelPricing,
 }
 
+/// Pricing information for a model
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelPricing {
+    /// Cost per million prompt tokens
     pub prompt: String,
+    /// Cost per million completion tokens
     pub completion: String,
 }
 

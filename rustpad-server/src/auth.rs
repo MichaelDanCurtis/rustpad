@@ -20,6 +20,9 @@ pub struct User {
     /// Whether AI features are enabled for this user
     #[serde(default)]
     pub ai_enabled: bool,
+    /// Whether this user is an administrator
+    #[serde(default)]
+    pub is_admin: bool,
 }
 
 /// Configuration for authentication
@@ -73,7 +76,7 @@ impl AuthManager {
     }
 
     /// Register a new user
-    pub fn register(&self, username: &str, password: &str, ai_enabled: bool) -> Result<User> {
+    pub fn register(&self, username: &str, password: &str, ai_enabled: bool, is_admin: bool) -> Result<User> {
         if !self.config.enabled {
             bail!("Authentication feature is not enabled");
         }
@@ -105,6 +108,7 @@ impl AuthManager {
             password_hash,
             created_at: chrono::Utc::now().to_rfc3339(),
             ai_enabled,
+            is_admin,
         };
 
         // Save user
@@ -200,5 +204,67 @@ impl AuthManager {
             return Ok(true); // If auth is disabled, all usernames are valid
         }
         self.user_exists(username)
+    }
+
+    /// List all users (admin only)
+    pub fn list_users(&self) -> Result<Vec<User>> {
+        if !self.config.enabled {
+            return Ok(Vec::new());
+        }
+
+        let mut users = Vec::new();
+        for entry in fs::read_dir(&self.config.data_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) == Some("json") {
+                let content = fs::read_to_string(&path)?;
+                if let Ok(user) = serde_json::from_str::<User>(&content) {
+                    users.push(user);
+                }
+            }
+        }
+
+        // Sort by username
+        users.sort_by(|a, b| a.username.cmp(&b.username));
+        Ok(users)
+    }
+
+    /// Update user's AI access (admin only)
+    pub fn update_ai_access(&self, username: &str, ai_enabled: bool) -> Result<()> {
+        if !self.config.enabled {
+            anyhow::bail!("Authentication feature is not enabled");
+        }
+
+        let mut user = self.load_user(username)?;
+        user.ai_enabled = ai_enabled;
+        self.save_user(&user)?;
+
+        // Update cache
+        let mut cache = self.users_cache.write();
+        cache.insert(username.to_string(), user);
+
+        info!("Updated AI access for user {}: {}", username, ai_enabled);
+        Ok(())
+    }
+
+    /// Delete a user (admin only)
+    pub fn delete_user(&self, username: &str) -> Result<()> {
+        if !self.config.enabled {
+            anyhow::bail!("Authentication feature is not enabled");
+        }
+
+        let user_file = self.config.data_dir.join(format!("{}.json", username));
+        if !user_file.exists() {
+            anyhow::bail!("User not found");
+        }
+
+        fs::remove_file(&user_file)?;
+
+        // Remove from cache
+        let mut cache = self.users_cache.write();
+        cache.remove(username);
+
+        info!("Deleted user: {}", username);
+        Ok(())
     }
 }

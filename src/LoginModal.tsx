@@ -43,6 +43,7 @@ function LoginModal({
   const [confirmPassword, setConfirmPassword] = useState("");
   const [tabIndex, setTabIndex] = useState(0);
   const [aiEnabled, setAiEnabled] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
 
   // Validation
   const usernameError = username.length > 0 && username.length < 3
@@ -75,6 +76,7 @@ function LoginModal({
 
       const data = await response.json();
       localStorage.setItem("rustpad_ai_enabled", String(data.ai_enabled));
+      localStorage.setItem("rustpad_is_admin", String(data.is_admin));
 
       toast({
         title: "Login successful",
@@ -112,7 +114,7 @@ function LoginModal({
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ username, password, ai_enabled: aiEnabled }),
+        body: JSON.stringify({ username, password, ai_enabled: aiEnabled, is_admin: isAdmin }),
       });
 
       if (!response.ok) {
@@ -122,6 +124,7 @@ function LoginModal({
 
       const data = await response.json();
       localStorage.setItem("rustpad_ai_enabled", String(data.ai_enabled));
+      localStorage.setItem("rustpad_is_admin", String(data.is_admin));
 
       toast({
         title: "Registration successful",
@@ -153,6 +156,7 @@ function LoginModal({
     setConfirmPassword("");
     setTabIndex(0);
     setAiEnabled(false);
+    setIsAdmin(false);
   }
 
   function handleClose() {
@@ -291,7 +295,20 @@ function LoginModal({
                       size="sm"
                     >
                       <Text fontSize="sm" color={darkMode ? "#cbcaca" : "inherit"}>
-                        Enable AI features (admin only)
+                        Enable AI features
+                      </Text>
+                    </Checkbox>
+                  </FormControl>
+
+                  <FormControl>
+                    <Checkbox
+                      isChecked={isAdmin}
+                      onChange={(e) => setIsAdmin(e.target.checked)}
+                      colorScheme="red"
+                      size="sm"
+                    >
+                      <Text fontSize="sm" color={darkMode ? "#cbcaca" : "inherit"}>
+                        Administrator access (⚠️ full system control)
                       </Text>
                     </Checkbox>
                   </FormControl>

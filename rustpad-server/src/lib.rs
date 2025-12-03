@@ -238,6 +238,25 @@ fn backend(config: ServerConfig) -> BoxedFilter<(impl Reply,)> {
         .and(state_filter.clone())
         .and_then(artifacts_delete_handler);
 
+    let admin_users = warp::path!("admin" / "users")
+        .and(warp::get())
+        .and(warp::header::optional("Authorization"))
+        .and(state_filter.clone())
+        .and_then(admin_users_handler);
+
+    let admin_update_ai = warp::path!("admin" / "users" / String / "ai")
+        .and(warp::put())
+        .and(warp::body::json())
+        .and(warp::header::optional("Authorization"))
+        .and(state_filter.clone())
+        .and_then(admin_update_ai_handler);
+
+    let admin_delete_user = warp::path!("admin" / "users" / String)
+        .and(warp::delete())
+        .and(warp::header::optional("Authorization"))
+        .and(state_filter.clone())
+        .and_then(admin_delete_user_handler);
+
     socket
         .or(text)
         .or(stats)
@@ -253,6 +272,9 @@ fn backend(config: ServerConfig) -> BoxedFilter<(impl Reply,)> {
         .or(artifacts_get)
         .or(artifacts_store)
         .or(artifacts_delete)
+        .or(admin_users)
+        .or(admin_update_ai)
+        .or(admin_delete_user)
         .boxed()
 }
 
@@ -368,6 +390,8 @@ struct AuthRequest {
     password: String,
     #[serde(default)]
     ai_enabled: bool,
+    #[serde(default)]
+    is_admin: bool,
 }
 
 /// Response for authentication
@@ -376,6 +400,7 @@ struct AuthResponse {
     username: String,
     created_at: String,
     ai_enabled: bool,
+    is_admin: bool,
 }
 
 /// Response for freezing a document
@@ -576,13 +601,14 @@ async fn register_handler(
         .ok_or_else(|| warp::reject::custom(CustomReject(anyhow::anyhow!("Auth not enabled"))))?;
 
     let user = auth_manager
-        .register(&req.username, &req.password, req.ai_enabled)
+        .register(&req.username, &req.password, req.ai_enabled, req.is_admin)
         .map_err(|e| warp::reject::custom(CustomReject(e)))?;
 
     Ok(warp::reply::json(&AuthResponse {
         username: user.username,
         created_at: user.created_at,
         ai_enabled: user.ai_enabled,
+        is_admin: user.is_admin,
     }))
 }
 
@@ -604,6 +630,7 @@ async fn login_handler(
         username: user.username,
         created_at: user.created_at,
         ai_enabled: user.ai_enabled,
+        is_admin: user.is_admin,
     }))
 }
 
@@ -808,6 +835,117 @@ async fn artifacts_delete_handler(
 
     Ok(warp::reply::with_status(
         "Artifact deleted",
+        warp::http::StatusCode::OK,
+    ))
+}
+
+/// User info for admin panel (without password hash)
+#[derive(Serialize)]
+struct AdminUserInfo {
+    username: String,
+    created_at: String,
+    ai_enabled: bool,
+    is_admin: bool,
+}
+
+/// Request to update AI access
+#[derive(serde::Deserialize)]
+struct UpdateAiAccessRequest {
+    ai_enabled: bool,
+}
+
+/// Helper function to check admin access
+fn check_admin_access(auth: Option<String>, auth_manager: &AuthManager) -> Result<(), Rejection> {
+    let (username, password) = extract_basic_auth(auth)?;
+    let user = auth_manager
+        .login(&username, &password)
+        .map_err(|e| warp::reject::custom(CustomReject(e)))?;
+
+    if !user.is_admin {
+        return Err(warp::reject::custom(CustomReject(anyhow::anyhow!(
+            "Admin access required"
+        ))));
+    }
+
+    Ok(())
+}
+
+/// Handler for GET /api/admin/users
+async fn admin_users_handler(
+    auth: Option<String>,
+    state: ServerState,
+) -> Result<impl Reply, Rejection> {
+    let auth_manager = state
+        .auth_manager
+        .as_ref()
+        .ok_or_else(|| warp::reject::custom(CustomReject(anyhow::anyhow!("Auth not enabled"))))?;
+
+    // Check admin access
+    check_admin_access(auth, auth_manager)?;
+
+    let users = auth_manager
+        .list_users()
+        .map_err(|e| warp::reject::custom(CustomReject(e)))?;
+
+    // Convert to admin user info (remove password hash)
+    let admin_users: Vec<AdminUserInfo> = users
+        .into_iter()
+        .map(|u| AdminUserInfo {
+            username: u.username,
+            created_at: u.created_at,
+            ai_enabled: u.ai_enabled,
+            is_admin: u.is_admin,
+        })
+        .collect();
+
+    Ok(warp::reply::json(&admin_users))
+}
+
+/// Handler for PUT /api/admin/users/{username}/ai
+async fn admin_update_ai_handler(
+    username: String,
+    req: UpdateAiAccessRequest,
+    auth: Option<String>,
+    state: ServerState,
+) -> Result<impl Reply, Rejection> {
+    let auth_manager = state
+        .auth_manager
+        .as_ref()
+        .ok_or_else(|| warp::reject::custom(CustomReject(anyhow::anyhow!("Auth not enabled"))))?;
+
+    // Check admin access
+    check_admin_access(auth, auth_manager)?;
+
+    auth_manager
+        .update_ai_access(&username, req.ai_enabled)
+        .map_err(|e| warp::reject::custom(CustomReject(e)))?;
+
+    Ok(warp::reply::with_status(
+        "AI access updated",
+        warp::http::StatusCode::OK,
+    ))
+}
+
+/// Handler for DELETE /api/admin/users/{username}
+async fn admin_delete_user_handler(
+    username: String,
+    auth: Option<String>,
+    state: ServerState,
+) -> Result<impl Reply, Rejection> {
+    let auth_manager = state
+        .auth_manager
+        .as_ref()
+        .ok_or_else(|| warp::reject::custom(CustomReject(anyhow::anyhow!("Auth not enabled"))))?;
+
+    // Check admin access
+    check_admin_access(auth, auth_manager)?;
+
+    auth_manager
+        .delete_user(&username)
+        .map_err(|e| warp::reject::custom(CustomReject(e)))?;
+
+    Ok(warp::reply::with_status(
+        "User deleted",
         warp::http::StatusCode::OK,
     ))
 }
