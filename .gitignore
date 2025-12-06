@@ -12,3 +12,7 @@ dist
 .env
 .env.local
 .env.*.local
+
+# User data files (frozen documents and user accounts)
+frozen_documents/
+rustpad-server/frozen_documents/
