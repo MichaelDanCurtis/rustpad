@@ -1,0 +1,213 @@
+services:
+  traefik:
+    image: traefik
+    restart: always
+    command:
+    - --api=true
+    - --api.insecure=true
+    - --providers.docker=true
+    - --providers.docker.exposedbydefault=false
+    - --entrypoints.web.address=:80
+    - --entrypoints.web.http.redirections.entryPoint.to=websecure
+    - --entrypoints.web.http.redirections.entryPoint.scheme=https
+    - --entrypoints.websecure.address=:443
+    - --certificatesresolvers.mytlschallenge.acme.tlschallenge=true
+    - --certificatesresolvers.mytlschallenge.acme.email=${SSL_EMAIL}
+    - --certificatesresolvers.mytlschallenge.acme.storage=/letsencrypt/acme.json
+    ports:
+    - 80:80
+    - 443:443
+    volumes:
+    - traefik_data:/letsencrypt
+    - /var/run/docker.sock:/var/run/docker.sock:ro
+    labels:
+    - traefik.enable=true
+    - traefik.http.routers.dashboard.rule=Host(`traefik.${DOMAIN_NAME}`) && (PathPrefix(`/api`) || PathPrefix(`/dashboard`))
+    - traefik.http.routers.dashboard-redirect.rule=Host(`traefik.${DOMAIN_NAME}`) && Path(`/`)
+    - traefik.http.routers.dashboard-redirect.entrypoints=websecure
+    - traefik.http.routers.dashboard-redirect.middlewares=dashboard-redirect
+    - traefik.http.routers.dashboard-redirect.tls=true
+    - traefik.http.routers.dashboard-redirect.tls.certresolver=mytlschallenge
+    - traefik.http.middlewares.dashboard-redirect.redirectregex.regex=^https://traefik.${DOMAIN_NAME}/$$
+    - traefik.http.middlewares.dashboard-redirect.redirectregex.replacement=https://traefik.${DOMAIN_NAME}/dashboard/
+    - traefik.http.middlewares.dashboard-redirect.redirectregex.permanent=true
+    - traefik.http.routers.dashboard.service=api@internal
+    - traefik.http.routers.dashboard.entrypoints=websecure
+    - traefik.http.routers.dashboard.tls=true
+    - /var/run/docker.sock:/var/run/docker.sock:ro
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:beta
+    container_name: n8n
+    restart: always
+    ports:
+    - 127.0.0.1:5678:5678
+    environment:
+      PUPPETEER_EXECUTABLE_PATH: /usr/bin/chromium-browser
+      PUPPETEER_SKIP_CHROMIUM_DOWNLOAD: 'true'
+      N8N_HOST: n8n.${DOMAIN_NAME}
+      N8N_PORT: '5678'
+      N8N_PROTOCOL: https
+      NODE_ENV: production
+      WEBHOOK_URL: https://n8n.${DOMAIN_NAME}/
+      GENERIC_TIMEZONE: ${GENERIC_TIMEZONE}
+      N8N_PROXY_HOPS: '1'
+      N8N_ENABLED_MODULES: chat-hub
+    labels:
+    - traefik.enable=true
+    - traefik.http.routers.n8n.rule=Host(`n8n.${DOMAIN_NAME}`)
+    - traefik.http.routers.n8n.tls=true
+    - traefik.http.routers.n8n.entrypoints=web,websecure
+    - traefik.http.routers.n8n.tls.certresolver=mytlschallenge
+    - traefik.http.middlewares.n8n.headers.SSLRedirect=true
+    - traefik.http.middlewares.n8n.headers.STSSeconds=315360000
+    - traefik.http.middlewares.n8n.headers.browserXSSFilter=true
+    - traefik.http.middlewares.n8n.headers.contentTypeNosniff=true
+    - traefik.http.middlewares.n8n.headers.forceSTSHeader=true
+    - traefik.http.middlewares.n8n.headers.SSLHost=${DOMAIN_NAME}
+    - traefik.http.middlewares.n8n.headers.STSIncludeSubdomains=true
+    - traefik.http.middlewares.n8n.headers.STSPreload=true
+    - traefik.http.routers.n8n.middlewares=n8n@docker
+    volumes:
+    - n8n_data:/home/node/.n8n
+    - /local-files:/files
+    depends_on:
+    - traefik
+  waha:
+    image: devlikeapro/waha:latest
+    container_name: waha
+    restart: always
+    ports:
+    - 127.0.0.1:3000:3000
+    environment:
+      WAHA_PORT: '3000'
+      WAHA_HOSTNAME: waha.${DOMAIN_NAME}
+    labels:
+    - traefik.enable=true
+    - traefik.http.routers.waha.rule=Host(`waha.${DOMAIN_NAME}`)
+    - traefik.http.routers.waha.tls=true
+    - traefik.http.routers.waha.entrypoints=web,websecure
+    - traefik.http.routers.waha.tls.certresolver=mytlschallenge
+    - traefik.http.middlewares.waha.headers.SSLRedirect=true
+    - traefik.http.middlewares.waha.headers.STSSeconds=315360000
+    - traefik.http.middlewares.waha.headers.browserXSSFilter=true
+    - traefik.http.middlewares.waha.headers.contentTypeNosniff=true
+    - traefik.http.middlewares.waha.headers.forceSTSHeader=true
+    - traefik.http.middlewares.waha.headers.SSLHost=${DOMAIN_NAME}
+    - traefik.http.middlewares.waha.headers.STSIncludeSubdomains=true
+    - traefik.http.middlewares.waha.headers.STSPreload=true
+    - traefik.http.routers.waha.middlewares=waha@docker
+    depends_on:
+    - traefik
+  canvas:
+    image: ghcr.io/yctimlin/mcp_excalidraw-canvas:latest
+    container_name: canvas
+    restart: always
+    ports:
+    - 127.0.0.1:3001:3000
+    environment:
+      CANVAS_HOST: canvas.${DOMAIN_NAME}
+      CANVAS_PROTOCOL: https
+    labels:
+    - traefik.enable=true
+    - traefik.http.routers.canvas.rule=Host(`canvas.${DOMAIN_NAME}`)
+    - traefik.http.routers.canvas.tls=true
+    - traefik.http.routers.canvas.entrypoints=web,websecure
+    - traefik.http.routers.canvas.tls.certresolver=mytlschallenge
+    - traefik.http.middlewares.canvas.headers.SSLRedirect=true
+    - traefik.http.middlewares.canvas.headers.STSSeconds=315360000
+    - traefik.http.middlewares.canvas.headers.browserXSSFilter=true
+    - traefik.http.middlewares.canvas.headers.contentTypeNosniff=true
+    - traefik.http.middlewares.canvas.headers.forceSTSHeader=true
+    - traefik.http.middlewares.canvas.headers.SSLHost=${DOMAIN_NAME}
+    - traefik.http.middlewares.canvas.headers.STSIncludeSubdomains=true
+    - traefik.http.middlewares.canvas.headers.STSPreload=true
+    - traefik.http.routers.canvas.middlewares=canvas@docker
+    - traefik.http.services.canvas.loadbalancer.server.port=3000
+    depends_on:
+    - traefik
+  mcp:
+    image: node:20-alpine
+    container_name: mcp
+    restart: always
+    ports:
+    - 127.0.0.1:3002:3000
+    environment:
+      NODE_ENV: production
+      MCP_HOST: mcp.${DOMAIN_NAME}
+      MCP_PORT: '3000'
+    working_dir: /app
+    command: node server.js
+    labels:
+    - traefik.enable=true
+    - traefik.http.routers.mcp.rule=Host(`mcp.${DOMAIN_NAME}`)
+    - traefik.http.routers.mcp.tls=true
+    - traefik.http.routers.mcp.entrypoints=web,websecure
+    - traefik.http.routers.mcp.tls.certresolver=mytlschallenge
+    - traefik.http.middlewares.mcp.headers.SSLRedirect=true
+    - traefik.http.middlewares.mcp.headers.STSSeconds=315360000
+    - traefik.http.middlewares.mcp.headers.browserXSSFilter=true
+    - traefik.http.middlewares.mcp.headers.contentTypeNosniff=true
+    - traefik.http.middlewares.mcp.headers.forceSTSHeader=true
+    - traefik.http.middlewares.mcp.headers.SSLHost=${DOMAIN_NAME}
+    - traefik.http.middlewares.mcp.headers.STSIncludeSubdomains=true
+    - traefik.http.middlewares.mcp.headers.STSPreload=true
+    - traefik.http.routers.mcp.middlewares=mcp@docker
+    volumes:
+    - mcp_data:/app
+    depends_on:
+    - traefik
+  terminal:
+    image: michaeldancurtis/terminal:latest
+    container_name: terminal
+    expose:
+    - 8080
+    environment:
+    - NODE_ENV=production
+    labels:
+    - traefik.enable=true
+    - traefik.http.routers.terminal.rule=Host(`terminal.${DOMAIN_NAME}`)
+    - traefik.http.routers.terminal.entrypoints=websecure
+    - traefik.http.routers.terminal.tls=true
+    - traefik.http.routers.terminal.tls.certresolver=mytlschallenge
+    - traefik.http.services.terminal.loadbalancer.server.port=8080
+    restart: unless-stopped
+    depends_on:
+    - traefik
+    volumes:
+    - ./data/terminal:/app/data
+  rustpad:
+    image: michaeldancurtis/rustpadplus:latest
+    container_name: rustpad
+    restart: always
+    expose:
+    - 3030
+    environment:
+    - RUST_LOG=info
+    - ENABLE_FILE_FREEZE=true
+    - ENABLE_AI=true
+    - ENABLE_ARTIFACTS=true
+    - ENABLE_COPILOT=true
+    - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
+    labels:
+    - traefik.enable=true
+    - traefik.http.routers.rustpad.rule=Host(`rustpad.${DOMAIN_NAME}`)
+    - traefik.http.routers.rustpad.entrypoints=websecure
+    - traefik.http.routers.rustpad.tls=true
+    - traefik.http.routers.rustpad.tls.certresolver=mytlschallenge
+    - traefik.http.services.rustpad.loadbalancer.server.port=3030
+    volumes:
+    - rustpad_frozen:/root/.rustpad/frozen
+    - rustpad_artifacts:/artifacts
+    depends_on:
+    - traefik
+volumes:
+  traefik_data:
+    external: true
+  n8n_data:
+    external: true
+  mcp_data:
+    external: false
+  rustpad_frozen:
+    external: false
+  rustpad_artifacts:
+    external: false

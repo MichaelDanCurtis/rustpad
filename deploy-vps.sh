@@ -39,7 +39,6 @@ tar -czf rustpad-deploy.tar.gz \
     src/ \
     index.html \
     tsconfig.json \
-    tsconfig.node.json \
     vite.config.ts \
     public/
 
