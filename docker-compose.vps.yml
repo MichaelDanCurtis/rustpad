@@ -11,6 +11,11 @@ services:
     - --entrypoints.web.http.redirections.entryPoint.to=websecure
     - --entrypoints.web.http.redirections.entryPoint.scheme=https
     - --entrypoints.websecure.address=:443
+    - --entrypoints.websecure.transport.respondingTimeouts.readTimeout=0
+    - --entrypoints.websecure.transport.respondingTimeouts.writeTimeout=0
+    - --entrypoints.websecure.transport.respondingTimeouts.idleTimeout=600s
+    - --entrypoints.web.transport.respondingTimeouts.readTimeout=0
+    - --entrypoints.web.transport.respondingTimeouts.writeTimeout=0
     - --certificatesresolvers.mytlschallenge.acme.tlschallenge=true
     - --certificatesresolvers.mytlschallenge.acme.email=${SSL_EMAIL}
     - --certificatesresolvers.mytlschallenge.acme.storage=/letsencrypt/acme.json
@@ -196,6 +201,10 @@ services:
     - traefik.http.routers.rustpad.tls=true
     - traefik.http.routers.rustpad.tls.certresolver=mytlschallenge
     - traefik.http.services.rustpad.loadbalancer.server.port=3030
+    - traefik.http.services.rustpad.loadbalancer.responseforwarding.flushinterval=100ms
+    - traefik.http.middlewares.rustpad-streaming.buffering.maxRequestBodyBytes=0
+    - traefik.http.middlewares.rustpad-streaming.buffering.maxResponseBodyBytes=0
+    - traefik.http.routers.rustpad.middlewares=rustpad-streaming@docker
     volumes:
     - rustpad_frozen:/data/frozen_documents
     - rustpad_artifacts:/artifacts
