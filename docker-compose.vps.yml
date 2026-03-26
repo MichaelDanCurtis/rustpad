@@ -188,6 +188,7 @@ services:
     - ENABLE_ARTIFACTS=true
     - ENABLE_COPILOT=true
     - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
+    - SAVE_DIR=/data/frozen_documents
     labels:
     - traefik.enable=true
     - traefik.http.routers.rustpad.rule=Host(`rustpad.${DOMAIN_NAME}`)
@@ -196,7 +197,7 @@ services:
     - traefik.http.routers.rustpad.tls.certresolver=mytlschallenge
     - traefik.http.services.rustpad.loadbalancer.server.port=3030
     volumes:
-    - rustpad_frozen:/root/.rustpad/frozen
+    - rustpad_frozen:/data/frozen_documents
     - rustpad_artifacts:/artifacts
     depends_on:
     - traefik
